@@ -1,0 +1,334 @@
+# ALDAP configuration example (normative). All keys documented; defaults shown where applicable.
+# Secrets: any sensitive key X accepts exactly one of: X = "...", X_file = "/path", X_env = "VAR".
+# Env override: ALDAP_<SECTION>_<KEY>, e.g. ALDAP_UPSTREAM_AD_MAIN_BIND_PASSWORD_FILE=/run/secrets/ad_pass
+
+[server]
+log_level        = "info"          # debug | info | warn | error
+log_format       = "text"          # text | json
+ipc_socket       = "/run/aldap/aldap.sock"
+shutdown_timeout = "30s"
+max_connections  = 1024
+include          = []              # e.g. ["/etc/aldap/profiles/*.toml"]
+
+[tls]
+mode                = "builtin-ca" # builtin-ca | external
+ca_dir              = "/var/lib/aldap/ca"
+auto_init           = true         # create CA on first start if missing
+auto_renew_before   = "720h"
+expiry_alert_before = "336h"
+san                 = ["aldap.corp.local", "10.0.0.5"]
+min_version         = "1.2"
+client_auth         = "none"       # none | request | require
+# cert = "/etc/aldap/tls/server.crt"   # for mode = "external"
+# key  = "/etc/aldap/tls/server.key"
+# client_ca = "/etc/aldap/tls/clients-ca.pem"
+
+# ------------------------------------------------------------------ upstreams
+[upstream.ad-main]
+servers                  = ["ldaps://dc1.corp.local:636", "ldaps://dc2.corp.local:636"]
+kind                     = "ad"    # ad | generic
+starttls                 = false   # only for ldap:// servers
+starttls_required        = false
+tls_ca_file              = "/etc/aldap/tls/ad-ca.pem"
+tls_insecure_skip_verify = false
+# tls_server_name        = "dc1.corp.local"
+bind_dn                  = "CN=svc-aldap,OU=Service,DC=corp,DC=local"
+bind_password_file       = "/run/secrets/ad_pass"
+base_dn                  = "DC=corp,DC=local"
+health_interval          = "10s"
+health_check             = "rootdse"   # rootdse | bind | search
+page_size                = 500
+audit_service_account    = true
+
+[upstream.ad-main.failover]
+fail_threshold    = 3
+recover_threshold = 2
+prefer_primary    = true
+strategy          = "primary"      # primary | roundrobin
+
+[upstream.ad-main.pool]
+size     = 4
+max_idle = "5m"
+
+[upstream.ad-main.timeouts]
+connect = "5s"
+bind    = "5s"
+search  = "30s"
+
+# ------------------------------------------------------------------ rate limit (global defaults)
+[ratelimit]
+enabled                 = true
+negative_cache_ttl      = "60s"
+constant_time_bind_fail = true
+lock_response           = "invalidCredentials"   # invalidCredentials | busy
+allow_cidrs             = ["10.0.5.12/32"]       # e.g. Virola server
+allow_accounts          = []
+
+[ratelimit.ip]
+max_failures  = 20
+window        = "5m"
+lock_duration = "15m"
+bind_rps      = 10
+bind_burst    = 20
+search_rps    = 50
+search_burst  = 100
+
+[ratelimit.account]
+max_failures  = 3        # keep below AD lockout threshold
+window        = "10m"
+lock_duration = "15m"
+
+[ratelimit.delay]
+base = "250ms"
+max  = "4s"
+
+[ratelimit.tarpit]
+enabled   = false
+delay     = "30s"
+max_conns = 64
+
+[ratelimit.lockdown]
+auto           = false
+allow_cidrs    = ["10.0.5.12/32"]
+allow_accounts = []
+
+# ------------------------------------------------------------------ IDS
+[ids]
+summary_interval = "5m"
+quiet_period     = "15m"
+
+[ids.spray]
+enabled            = true
+window             = "10m"
+min_accounts       = 5
+same_password_hash = true
+
+[ids.stuffing]
+enabled   = true
+window    = "5m"
+min_pairs = 20
+
+[ids.slow_brute]
+enabled          = true
+window           = "6h"
+min_failures     = 30
+max_rate_per_min = 2
+
+[ids.enumeration]
+enabled      = true
+min_accounts = 10
+
+[ids.recon]
+enabled = true
+
+[ids.anomaly]
+enabled   = true
+learn_for = "24h"
+
+[ids.honeytoken]
+enabled       = true
+lock_duration = "24h"
+
+[ids.fingerprint]
+enabled = false
+
+# ------------------------------------------------------------------ profiles
+[profile.virola]
+listen            = [":636"]
+transport         = "ldaps"        # ldaps | ldap | starttls | ldap+starttls
+starttls_required = false
+upstream          = "ad-main"
+mode              = "proxy"        # proxy | honeypot | mock
+virtual_base      = "ou=virola,dc=aldap"
+bases             = ["OU=Office,DC=corp,DC=local", "CN=Users,DC=corp,DC=local"]
+filter            = "(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))"
+exclude_filter    = "(sAMAccountName=svc-*)"
+rdn_attr          = "sAMAccountName"
+anonymous_bind    = false
+nested_groups     = true
+honeytokens       = ["h.petrenko@corp.local", "backup-admin@corp.local"]
+honeytoken_in_groups = true
+
+[profile.virola.client_bind]
+dn            = "cn=virola,ou=services,dc=aldap"
+password_file = "/run/secrets/virola_bind"
+
+[profile.virola.user_bind]
+allow              = true
+default_domain     = "corp.local"
+require_membership = true
+
+[profile.virola.attrs]
+allow = ["userPrincipalName", "sAMAccountName", "displayName", "givenName", "sn", "mail", "title", "department", "telephoneNumber", "memberOf", "objectClass", "objectGUID"]
+
+[profile.virola.attrs.map]
+uid  = "sAMAccountName"
+cn   = "displayName"
+
+[profile.virola.attrs.computed]
+mail = "{{ or .mail (printf \"%s@corp.local\" .sAMAccountName) }}"
+
+[profile.virola.attrs.mask]
+telephoneNumber = "***{last4}"
+
+[profile.virola.objectclass.map]
+user = "inetOrgPerson"
+
+[profile.virola.groups.virola-users]
+description = "All Virola users"
+objectclass = "groupOfNames"
+[profile.virola.groups.virola-users.members]
+# bases/filter default to profile.bases/profile.filter
+ad_groups = ["CN=Staff,OU=Groups,DC=corp,DC=local"]
+include   = []
+exclude   = ["svc-backup@corp.local"]
+
+[profile.virola.groups.virola-admins]
+objectclass = "groupOfNames"
+[profile.virola.groups.virola-admins.members]
+ad_groups = ["CN=IT,OU=Groups,DC=corp,DC=local"]
+
+[profile.virola.cache]
+mode             = "ttl"           # none | ttl | replica
+ttl              = "60s"
+max_entries      = 10000
+stale_while_down = true
+stale_max        = "1h"
+# sync_interval  = "5m"            # replica
+# sync_jitter    = "20%"
+
+[profile.virola.limits]
+max_result_size   = 5000
+max_filter_depth  = 20
+max_filter_len    = 4096
+max_request_bytes = "1MiB"
+max_conns_per_ip  = 32
+idle_timeout      = "10m"
+upstream_parallel = 4
+
+# [profile.virola.ratelimit.account]   # per-profile override
+# max_failures = 2
+
+# [profile.virola.shadow]
+# filter = "(&(objectCategory=person)(department=Sales))"
+
+# [profile.virola.record]
+# enabled = false
+# file    = "/var/lib/aldap/record/virola.jsonl"
+
+[profile.honeypot]
+listen       = [":1389"]
+transport    = "ldap+starttls"
+upstream     = "ad-main"
+mode         = "honeypot"
+virtual_base = "dc=corp,dc=local"
+
+# ------------------------------------------------------------------ events (audit stream)
+[events]
+buffer_size   = 100000
+hash_accounts = false
+# salt_file   = "/run/secrets/event_salt"
+include       = []                 # empty = all
+exclude       = []
+
+[events.stdout]
+enabled = true
+format  = "json"
+
+[events.file]
+enabled     = false
+path        = "/var/lib/aldap/events.jsonl"
+max_size_mb = 100
+max_files   = 10
+compress    = true
+
+[events.syslog]
+enabled  = false
+network  = "udp"
+address  = "siem.corp.local:514"
+facility = "auth"
+
+[[events.webhook]]
+name             = "ips"
+url              = "https://ips.corp.local/aldap/events"
+events           = []              # empty = all
+batch_size       = 100
+batch_interval   = "2s"
+timeout          = "5s"
+hmac_secret_file = "/run/secrets/ips_hmac"
+queue_size       = 10000
+on_overflow      = "drop_oldest"   # drop_oldest | block
+tls_ca_file      = "/etc/aldap/tls/corp-ca.pem"
+[events.webhook.retry]
+max     = 5
+backoff = "1s"
+max_backoff = "60s"
+[events.webhook.headers]
+X-Source = "aldap"
+
+# ------------------------------------------------------------------ human notifications
+[notify]
+cooldown        = "10m"
+digest_interval = "15m"
+
+[[notify.channel]]
+name       = "tg-ops"
+type       = "telegram"
+events     = ["attack_start", "attack_summary", "attack_end", "honeytoken", "upstream_down", "upstream_up", "lockdown", "cert_expiring"]
+min_level  = "medium"
+bot_token_file = "/run/secrets/tg_token"
+chat_id    = "-1001234567890"
+
+[[notify.channel]]
+name       = "virola-ops"
+type       = "virola"
+events     = ["attack_start", "attack_end", "upstream_down", "upstream_up"]
+base_url   = "https://virola.corp.local:7777"
+token_file = "/run/secrets/virola_api_token"
+room_id    = 42
+tls_ca_file = "/etc/aldap/tls/corp-ca.pem"
+
+[[notify.channel]]
+name          = "mail-sec"
+type          = "email"
+events        = ["attack_start", "attack_end", "honeytoken", "lockdown"]
+smtp_host     = "smtp.corp.local"
+smtp_port     = 587
+tls           = "starttls"         # starttls | tls | none
+username      = "aldap@corp.local"
+password_file = "/run/secrets/smtp_pass"
+from          = "aldap@corp.local"
+to            = ["sec@corp.local"]
+
+[[notify.channel]]
+name          = "itsm"
+type          = "webhook"
+events        = ["attack_start", "attack_end", "upstream_down"]
+url           = "https://itsm.corp.local/api/incidents"
+method        = "POST"
+body_template = '{"title":"ALDAP {{.Event}} {{.Profile}}","severity":"{{.Level}}","source_ip":"{{.ClientIP}}","details":{{.DataJSON}}}'
+hmac_secret_file = "/run/secrets/itsm_hmac"
+[notify.channel.headers]
+Authorization = "Bearer replace-me-via-secret"   # prefer headers_file
+
+# ------------------------------------------------------------------ management API
+[api]
+enabled        = true
+listen         = "127.0.0.1:8636"
+rate_limit_rps = 50
+[api.tls]
+builtin = true                     # use builtin CA; required if listen is not loopback
+[api.metrics]
+enabled = true
+public  = false
+
+[[api.token]]
+name        = "ips"
+token_file  = "/run/secrets/api_ips"
+scopes      = ["events:read", "locks:read", "locks:write", "status:read"]
+allow_cidrs = ["10.0.9.0/24"]
+
+[[api.token]]
+name       = "admin"
+token_file = "/run/secrets/api_admin"
+scopes     = ["admin"]

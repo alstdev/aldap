@@ -1,0 +1,64 @@
+# ALDAP — production-style compose. Secrets via files; no interactive setup needed.
+# Ports are published per profile (see aldap.toml). Container runs non-root, read-only.
+services:
+  aldap:
+    image: aldap/aldap:latest
+    # build:
+    #   context: .
+    #   target: dhi
+    container_name: aldap
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./deploy/seccomp.json
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /run/aldap:size=8m,uid=65532,gid=65532,mode=0700
+    ports:
+      - "636:636"      # profile.virola (ldaps)
+      - "1389:1389"    # profile.honeypot
+      - "127.0.0.1:8636:8636"  # API, loopback only
+    volumes:
+      - ./aldap.toml:/etc/aldap/aldap.toml:ro
+      - ./tls/ad-ca.pem:/etc/aldap/tls/ad-ca.pem:ro
+      - aldap-state:/var/lib/aldap
+    environment:
+      ALDAP_CONFIG: /etc/aldap/aldap.toml
+      # Any key can be overridden here, e.g.:
+      # ALDAP_UPSTREAM_AD_MAIN_SERVERS: "ldaps://dc1.corp.local:636,ldaps://dc2.corp.local:636"
+      # ALDAP_SERVER_LOG_LEVEL: debug
+    secrets:
+      - ad_pass
+      - virola_bind
+      - api_admin
+      - api_ips
+      - ips_hmac
+      - tg_token
+      - virola_api_token
+      - smtp_pass
+      - itsm_hmac
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/aldap", "check", "--quick"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
+
+volumes:
+  aldap-state:
+
+secrets:
+  ad_pass:            { file: ./secrets/ad_pass }
+  virola_bind:        { file: ./secrets/virola_bind }
+  api_admin:          { file: ./secrets/api_admin }
+  api_ips:            { file: ./secrets/api_ips }
+  ips_hmac:           { file: ./secrets/ips_hmac }
+  tg_token:           { file: ./secrets/tg_token }
+  virola_api_token:   { file: ./secrets/virola_api_token }
+  smtp_pass:          { file: ./secrets/smtp_pass }
+  itsm_hmac:          { file: ./secrets/itsm_hmac }

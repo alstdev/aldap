@@ -1,0 +1,87 @@
+version: "2"
+
+run:
+  timeout: 10m
+  tests: true
+  build-tags:
+    - integration
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gosec
+    - gocritic
+    - revive
+    - misspell
+    - bodyclose
+    - noctx
+    - errorlint
+    - exhaustive
+    - gocyclo
+    - nilerr
+    - prealloc
+    - unconvert
+    - unparam
+    - copyloopvar
+    - durationcheck
+    - makezero
+    - nolintlint
+    - predeclared
+    - rowserrcheck
+    - sqlclosecheck
+    - testifylint
+    - thelper
+    - tparallel
+    - usestdlibvars
+    - whitespace
+  settings:
+    gocyclo:
+      min-complexity: 20
+    gosec:
+      excludes:
+        - G304 # file inclusion via variable: config paths are validated
+      config:
+        G306: "0600"
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: unused-parameter
+        - name: var-naming
+        - name: error-strings
+        - name: context-as-argument
+    exhaustive:
+      default-signifies-exhaustive: true
+    misspell:
+      locale: US
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - gocyclo
+          - unparam
+      - path: internal/testdir/
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - aldap
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

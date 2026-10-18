@@ -1,0 +1,198 @@
+openapi: 3.1.0
+info:
+  title: ALDAP Management API
+  version: "1.0"
+  license: { name: MIT }
+servers:
+  - url: https://127.0.0.1:8636
+security:
+  - bearer: []
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+  schemas:
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error: { type: string }
+        code: { type: string }
+    Lock:
+      type: object
+      required: [target, key, until, source]
+      properties:
+        target: { type: string, enum: [ip, account] }
+        key: { type: string }
+        until: { type: string, format: date-time }
+        failures: { type: integer }
+        source: { type: string, enum: [ratelimit, ids, api, honeytoken, tui] }
+        reason: { type: string }
+    LockRequest:
+      type: object
+      required: [target, key]
+      properties:
+        target: { type: string, enum: [ip, account] }
+        key: { type: string }
+        duration: { type: string, description: "Go duration, default 15m" }
+        reason: { type: string }
+    Indicator:
+      type: object
+      required: [target, key, score, reasons, first_seen, last_seen]
+      properties:
+        target: { type: string, enum: [ip, account] }
+        key: { type: string }
+        score: { type: number }
+        reasons: { type: array, items: { type: string } }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        locked: { type: boolean }
+    Event:
+      $ref: "./events.schema.json"
+    UpstreamServer:
+      type: object
+      properties:
+        url: { type: string }
+        state: { type: string, enum: [up, down, unknown] }
+        consecutive_failures: { type: integer }
+        last_error: { type: string }
+        latency_p50_ms: { type: number }
+        latency_p95_ms: { type: number }
+    Status:
+      type: object
+      properties:
+        version: { type: string }
+        uptime_s: { type: integer }
+        lockdown: { type: boolean }
+        profiles: { type: array, items: { type: string } }
+        upstreams:
+          type: object
+          additionalProperties:
+            type: array
+            items: { $ref: "#/components/schemas/UpstreamServer" }
+        locks_active: { type: integer }
+        attacks_active: { type: integer }
+    TestRequest:
+      type: object
+      required: [base, filter]
+      properties:
+        base: { type: string }
+        scope: { type: string, enum: [base, one, sub], default: sub }
+        filter: { type: string }
+        attrs: { type: array, items: { type: string } }
+    TestResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            type: object
+            properties:
+              dn: { type: string }
+              attrs: { type: object, additionalProperties: { type: array, items: { type: string } } }
+        denied_terms: { type: array, items: { type: string } }
+        upstream_queries: { type: array, items: { type: string } }
+        effective_filter: { type: string }
+  responses:
+    Err:
+      description: Error
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+paths:
+  /healthz:
+    get:
+      security: []
+      responses: { "200": { description: alive } }
+  /readyz:
+    get:
+      security: []
+      responses: { "200": { description: ready }, "503": { description: not ready } }
+  /metrics:
+    get:
+      description: Prometheus metrics. Requires status:read unless api.metrics.public=true.
+      responses: { "200": { description: text/plain exposition } }
+  /v1/status:
+    get:
+      x-scope: status:read
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Status" } } } }
+  /v1/upstreams:
+    get:
+      x-scope: status:read
+      responses: { "200": { description: OK } }
+  /v1/profiles:
+    get:
+      x-scope: status:read
+      responses: { "200": { description: profiles without secrets } }
+  /v1/locks:
+    get:
+      x-scope: locks:read
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Lock" } } } } }
+    post:
+      x-scope: locks:write
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/LockRequest" } } } }
+      responses: { "201": { description: created }, "400": { $ref: "#/components/responses/Err" } }
+  /v1/locks/{target}/{key}:
+    delete:
+      x-scope: locks:write
+      parameters:
+        - { name: target, in: path, required: true, schema: { type: string, enum: [ip, account] } }
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses: { "204": { description: unlocked }, "404": { $ref: "#/components/responses/Err" } }
+  /v1/indicators:
+    get:
+      x-scope: locks:read
+      parameters:
+        - { name: format, in: query, schema: { type: string, enum: [json, stix-lite, plain], default: json } }
+        - { name: min_score, in: query, schema: { type: number } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Indicator" } } } } }
+  /v1/events:
+    get:
+      x-scope: events:read
+      parameters:
+        - { name: since, in: query, schema: { type: integer }, description: "seq, exclusive" }
+        - { name: limit, in: query, schema: { type: integer, default: 1000, maximum: 10000 } }
+        - { name: types, in: query, schema: { type: string }, description: "comma-separated event types" }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Event" } } } } }
+  /v1/events/stream:
+    get:
+      x-scope: events:read
+      description: Server-Sent Events. Supports Last-Event-ID (= seq).
+      responses: { "200": { description: text/event-stream } }
+  /v1/lockdown:
+    post:
+      x-scope: locks:write
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [state], properties: { state: { type: string, enum: [on, off] } } } } } }
+      responses: { "200": { description: OK } }
+  /v1/config:
+    get:
+      x-scope: admin
+      responses: { "200": { description: "TOML with secrets masked", content: { application/toml: {} } } }
+    put:
+      x-scope: admin
+      requestBody: { required: true, content: { application/toml: {} } }
+      responses: { "200": { description: applied }, "400": { $ref: "#/components/responses/Err" } }
+  /v1/reload:
+    post:
+      x-scope: admin
+      responses: { "200": { description: reloaded }, "400": { $ref: "#/components/responses/Err" } }
+  /v1/profiles/{name}/sync:
+    post:
+      x-scope: admin
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { "202": { description: sync started } }
+  /v1/profiles/{name}/test:
+    post:
+      x-scope: admin
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/TestRequest" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/TestResponse" } } } }
+  /v1/baseline/{profile}/learn:
+    post:
+      x-scope: admin
+      parameters: [{ name: profile, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { duration: { type: string } } } } } }
+      responses: { "202": { description: learning } }

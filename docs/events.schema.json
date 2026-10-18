@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aldap.dev/schemas/aldap.event.v1.json",
+  "title": "ALDAP event v1",
+  "type": "object",
+  "required": ["schema", "ts", "id", "seq", "event", "level", "host"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "aldap.event.v1" },
+    "ts": { "type": "string", "format": "date-time" },
+    "id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$", "description": "ULID" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "event": {
+      "type": "string",
+      "enum": [
+        "bind_ok", "bind_fail", "bind_blocked", "lock", "unlock",
+        "attack_start", "attack_summary", "attack_end",
+        "recon", "anomaly", "honeytoken", "search", "op_denied", "session_summary",
+        "rate_limited", "tarpit", "lockdown",
+        "upstream_down", "upstream_up", "stale_served", "replica_sync_failed", "replica_synced",
+        "cert_expiring", "cert_renewed", "config_reload", "insecure_config", "shadow_diff",
+        "api_call", "startup", "shutdown"
+      ]
+    },
+    "level": { "type": "string", "enum": ["low", "medium", "high"] },
+    "host": { "type": "string" },
+    "profile": { "type": ["string", "null"] },
+    "conn_id": { "type": ["string", "null"] },
+    "client_ip": { "type": ["string", "null"] },
+    "client_port": { "type": ["integer", "null"] },
+    "tls": { "type": ["boolean", "null"] },
+    "account": { "type": ["string", "null"] },
+    "account_hash": { "type": ["string", "null"] },
+    "reason": { "type": ["string", "null"] },
+    "failures": { "type": ["integer", "null"] },
+    "upstream": { "type": ["string", "null"] },
+    "upstream_server": { "type": ["string", "null"] },
+    "duration_ms": { "type": ["number", "null"] },
+    "data": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "event": { "const": "bind_fail" } } },
+      "then": {
+        "properties": {
+          "reason": {
+            "enum": ["invalid_password", "unknown_account", "disabled", "locked_in_ad", "expired", "must_change", "anonymous", "not_member", "upstream_error"]
+          }
+        },
+        "required": ["reason"]
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "bind_blocked" } } },
+      "then": {
+        "properties": { "reason": { "enum": ["ip_locked", "account_locked", "negative_cache", "lockdown", "rate_limited"] } },
+        "required": ["reason"]
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "lock" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["target", "key", "until", "source"],
+            "properties": {
+              "target": { "enum": ["ip", "account"] },
+              "key": { "type": "string" },
+              "until": { "type": "string", "format": "date-time" },
+              "failures": { "type": "integer" },
+              "source": { "enum": ["ratelimit", "ids", "api", "honeytoken", "tui"] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "event": { "enum": ["attack_start", "attack_summary", "attack_end"] } } },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["kind", "attack_id"],
+            "properties": {
+              "kind": { "enum": ["spray", "stuffing", "slow_brute", "enumeration"] },
+              "attack_id": { "type": "string" },
+              "ips": { "type": "array", "items": { "type": "string" } },
+              "accounts_count": { "type": "integer" },
+              "failures": { "type": "integer" },
+              "rate_per_min": { "type": "number" },
+              "first_seen": { "type": "string", "format": "date-time" },
+              "last_seen": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "search" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["base", "scope", "filter_norm", "results"],
+            "properties": {
+              "base": { "type": "string" },
+              "scope": { "enum": ["base", "one", "sub"] },
+              "filter_norm": { "type": "string" },
+              "attrs_requested": { "type": "array", "items": { "type": "string" } },
+              "attrs_denied": { "type": "array", "items": { "type": "string" } },
+              "denied_terms": { "type": "array", "items": { "type": "string" } },
+              "results": { "type": "integer" },
+              "upstream_queries": { "type": "integer" },
+              "cache_hit": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "op_denied" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["op"],
+            "properties": {
+              "op": { "enum": ["add", "modify", "delete", "modrdn", "compare", "extended"] },
+              "oid": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,104 @@
+SHELL := /bin/bash
+.DEFAULT_GOAL := help
+
+MODULE      ?= aldap
+VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+DATE        ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS     := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
+GOFLAGS     := -trimpath -buildvcs=false
+export CGO_ENABLED := 0
+
+DIST        := dist
+PLATFORMS   := linux/amd64 linux/arm64 windows/amd64
+COVER_MIN   ?= 80
+
+GOLANGCI    := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+GOVULN      := go run golang.org/x/vuln/cmd/govulncheck@latest
+GOLICENSES  := go run github.com/google/go-licenses@latest
+GOTESTSUM   := go run gotest.tools/gotestsum@latest
+
+ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,ISC,Apache-2.0,Zlib,MPL-2.0,Unlicense
+
+.PHONY: help
+help: ## Show targets
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS=":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+
+.PHONY: build
+build: ## Build binaries for all platforms into dist/
+	@mkdir -p $(DIST)
+	@for p in $(PLATFORMS); do \
+	  os=$${p%/*}; arch=$${p#*/}; ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
+	  echo "building $$os/$$arch"; \
+	  GOOS=$$os GOARCH=$$arch go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldap_$${os}_$${arch}$$ext ./cmd/aldap || exit 1; \
+	  GOOS=$$os GOARCH=$$arch go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldapctl_$${os}_$${arch}$$ext ./cmd/aldapctl || exit 1; \
+	done
+
+.PHONY: build-local
+build-local: ## Build for current platform into dist/
+	@mkdir -p $(DIST)
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldap ./cmd/aldap
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldapctl ./cmd/aldapctl
+
+.PHONY: test
+test: ## Unit tests with race detector and coverage gate
+	@mkdir -p artifacts
+	$(GOTESTSUM) --junitfile artifacts/junit.xml -- -race -coverprofile=artifacts/coverage.out -covermode=atomic ./...
+	@go tool cover -func=artifacts/coverage.out | tail -1 | awk -v min=$(COVER_MIN) '{gsub("%","",$$3); if ($$3+0 < min) {printf "coverage %s%% < %s%%\n",$$3,min; exit 1} else printf "coverage %s%%\n",$$3}'
+	@go tool cover -html=artifacts/coverage.out -o artifacts/coverage.html
+
+.PHONY: integration
+integration: ## Integration tests against in-memory LDAP and e2e clients
+	$(GOTESTSUM) -- -race -tags integration -timeout 20m ./...
+
+.PHONY: integration-samba
+integration-samba: ## Integration tests against Samba AD DC in Docker
+	docker compose -f deploy/samba-dc/compose.yml up -d --wait
+	ALDAP_TEST_SAMBA_URL=ldaps://localhost:6636 \
+	ALDAP_TEST_SAMBA_BIND_DN="CN=Administrator,CN=Users,DC=test,DC=aldap" \
+	ALDAP_TEST_SAMBA_BIND_PASSWORD_FILE=deploy/samba-dc/secrets/admin_pass \
+	ALDAP_TEST_SAMBA_CA=testdata/samba-ca.pem \
+	$(GOTESTSUM) -- -tags integration_samba -timeout 30m ./... ; rc=$$?; \
+	docker compose -f deploy/samba-dc/compose.yml logs > artifacts/samba.log 2>&1 || true; \
+	docker compose -f deploy/samba-dc/compose.yml down -v; exit $$rc
+
+.PHONY: fuzz
+fuzz: ## Fuzz parsers for 2 minutes each
+	go test -run=^$$ -fuzz=FuzzParseFilter -fuzztime=2m ./internal/ldapfilter/
+	go test -run=^$$ -fuzz=FuzzParseDN -fuzztime=2m ./internal/ldapfilter/
+
+.PHONY: lint
+lint: ## golangci-lint
+	$(GOLANGCI) run ./...
+
+.PHONY: vet
+vet: ## go vet
+	go vet ./...
+
+.PHONY: vuln
+vuln: ## govulncheck
+	$(GOVULN) ./...
+
+.PHONY: licenses
+licenses: ## Check dependency licenses and regenerate THIRD_PARTY_LICENSES.md
+	$(GOLICENSES) check --allowed_licenses=$(ALLOWED_LICENSES) ./...
+	$(GOLICENSES) report ./... --template scripts/licenses.tpl > THIRD_PARTY_LICENSES.md
+
+.PHONY: shellcheck
+shellcheck: ## shellcheck all scripts
+	shellcheck -x scripts/*.sh build.sh
+
+.PHONY: ci
+ci: lint vet vuln licenses test integration shellcheck ## Everything except Samba
+
+.PHONY: docker-plain
+docker-plain: ## Build container with public golang/scratch images (local testing)
+	./build.sh --plain
+
+.PHONY: docker-dhi
+docker-dhi: ## Build container with Docker Hardened Images (requires docker login dhi.io)
+	./build.sh --dhi
+
+.PHONY: clean
+clean: ## Remove build artifacts
+	rm -rf $(DIST) artifacts
