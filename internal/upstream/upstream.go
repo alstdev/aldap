@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,7 +41,7 @@ type Upstream struct {
 	now      func() time.Time
 
 	rr      atomic.Uint32
-	current atomic.Int32
+	current atomic.Int64
 	closed  atomic.Bool
 
 	mu     sync.Mutex
@@ -238,7 +239,7 @@ func (u *Upstream) do(ctx context.Context, retry bool, fn func(ctx context.Conte
 		d := u.now().Sub(start)
 		if err == nil {
 			u.observe(s, true, nil, d)
-			u.current.Store(int32(s.index)) //nolint:gosec // index is a small list position
+			u.current.Store(int64(s.index))
 			return nil
 		}
 		if !isConnError(err) {
@@ -386,11 +387,11 @@ func (u *Upstream) searchOn(ctx context.Context, s *server, req SearchRequest, f
 	healthy := true
 	defer func() { s.svc.put(c, healthy) }()
 	res := &Result{Server: s.url.String()}
-	pageSize := u.cfg.PageSize
-	if pageSize < 1 {
-		pageSize = 500
+	pageSize := uint32(500)
+	if n := u.cfg.PageSize; n > 0 && n <= math.MaxUint32 {
+		pageSize = uint32(n)
 	}
-	paging := ldap.NewControlPaging(uint32(pageSize)) //nolint:gosec // validated ≥ 1, small
+	paging := ldap.NewControlPaging(pageSize)
 	timeLimit := int(req.TimeLimit / time.Second)
 	for {
 		if err := ctx.Err(); err != nil {
