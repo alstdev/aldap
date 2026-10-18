@@ -45,6 +45,7 @@ type TLS struct {
 	AutoRenewBefore   Duration `toml:"auto_renew_before" doc:"Reissue the built-in server certificate this long before expiry."`
 	ExpiryAlertBefore Duration `toml:"expiry_alert_before" doc:"Emit cert_expiring this long before expiry."`
 	SAN               []string `toml:"san" doc:"Additional DNS names or IPs for the server certificate."`
+	KeyType           string   `toml:"key_type" doc:"Key type of certificates issued by the built-in CA: ecdsa-p256 or rsa-2048."`
 	MinVersion        string   `toml:"min_version" doc:"Minimum TLS version: 1.2 or 1.3."`
 	ClientAuth        string   `toml:"client_auth" doc:"Client certificates: none, request or require (mTLS)."`
 	ClientCA          string   `toml:"client_ca" doc:"CA bundle used to verify client certificates."`
@@ -254,6 +255,7 @@ type TLSOverride struct {
 	AutoRenewBefore   *Duration `toml:"auto_renew_before" doc:"See tls.auto_renew_before."`
 	ExpiryAlertBefore *Duration `toml:"expiry_alert_before" doc:"See tls.expiry_alert_before."`
 	SAN               *[]string `toml:"san" doc:"See tls.san."`
+	KeyType           *string   `toml:"key_type" doc:"See tls.key_type."`
 	MinVersion        *string   `toml:"min_version" doc:"See tls.min_version."`
 	ClientAuth        *string   `toml:"client_auth" doc:"See tls.client_auth."`
 	ClientCA          *string   `toml:"client_ca" doc:"See tls.client_ca."`
@@ -283,6 +285,7 @@ type ClientBind struct {
 	Password     secret.Inline `toml:"password" doc:"Service password, inline (warned)."`
 	PasswordFile string        `toml:"password_file" doc:"File holding the service password."`
 	PasswordEnv  string        `toml:"password_env" doc:"Environment variable holding the service password."`
+	PasswordHash string        `toml:"password_hash" doc:"argon2id hash ($argon2id$...) of the service password; alternative to the password forms."`
 }
 
 // PasswordSource returns the client bind password source.

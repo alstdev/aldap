@@ -25,6 +25,7 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `tls.auto_renew_before` | duration | `720h0m0s` | Reissue the built-in server certificate this long before expiry. |
 | `tls.expiry_alert_before` | duration | `336h0m0s` | Emit cert_expiring this long before expiry. |
 | `tls.san` | []string | `[]` | Additional DNS names or IPs for the server certificate. |
+| `tls.key_type` | string | `"ecdsa-p256"` | Key type of certificates issued by the built-in CA: ecdsa-p256 or rsa-2048. |
 | `tls.min_version` | string | `"1.2"` | Minimum TLS version: 1.2 or 1.3. |
 | `tls.client_auth` | string | `"none"` | Client certificates: none, request or require (mTLS). |
 | `tls.client_ca` | string |  | CA bundle used to verify client certificates. |
@@ -236,6 +237,7 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `profile.<name>.tls.auto_renew_before` | duration | `inherit` | See tls.auto_renew_before. |
 | `profile.<name>.tls.expiry_alert_before` | duration | `inherit` | See tls.expiry_alert_before. |
 | `profile.<name>.tls.san` | []string | `inherit` | See tls.san. |
+| `profile.<name>.tls.key_type` | string | `inherit` | See tls.key_type. |
 | `profile.<name>.tls.min_version` | string | `inherit` | See tls.min_version. |
 | `profile.<name>.tls.client_auth` | string | `inherit` | See tls.client_auth. |
 | `profile.<name>.tls.client_ca` | string | `inherit` | See tls.client_ca. |
@@ -260,6 +262,7 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `profile.<name>.client_bind.password` | secret |  | Service password, inline (warned). |
 | `profile.<name>.client_bind.password_file` | string |  | File holding the service password. |
 | `profile.<name>.client_bind.password_env` | string |  | Environment variable holding the service password. |
+| `profile.<name>.client_bind.password_hash` | string |  | argon2id hash ($argon2id$...) of the service password; alternative to the password forms. |
 | `profile.<name>.user_bind` | table |  | User bind policy. |
 | `profile.<name>.user_bind.allow` | bool | `true` | Forward user binds to the upstream. |
 | `profile.<name>.user_bind.default_domain` | string |  | Domain appended to bare account names. |

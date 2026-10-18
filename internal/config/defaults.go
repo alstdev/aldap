@@ -41,6 +41,7 @@ func Default() *Config {
 			AutoInit:          true,
 			AutoRenewBefore:   d(720 * time.Hour),
 			ExpiryAlertBefore: d(336 * time.Hour),
+			KeyType:           "ecdsa-p256",
 			MinVersion:        "1.2",
 			ClientAuth:        "none",
 		},

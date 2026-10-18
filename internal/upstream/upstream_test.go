@@ -651,7 +651,8 @@ func TestHealth_KindsAndEvents(t *testing.T) {
 			}
 			fss[0].setAlive(true)
 			waitFor(t, "up event", func() bool { return ev.count(EventUpstreamUp) == 1 })
-			if u.Status()[0].State != StateUp || ev.events[1].Level != "medium" || ev.events[1].Data["reason"] != "recovered" {
+			up := ev.events[len(ev.events)-1]
+			if u.Status()[0].State != StateUp || up.Kind != EventUpstreamUp || up.Level != "medium" || up.Data["reason"] != "recovered" {
 				t.Fatalf("events %+v", ev.events)
 			}
 			cancel()
@@ -708,9 +709,9 @@ func TestAudit_Cases(t *testing.T) {
 		t.Fatalf("filter %q", f)
 	}
 	u.Start(ctx)
-	waitFor(t, "insecure_config", func() bool { return ev.count(EventInsecureConfig) == 1 })
-	e := ev.events[0]
-	if e.Data["what"] != "service_account_admin" || e.Level != "medium" {
+	waitFor(t, "insecure_config", func() bool { return countWhat(ev, "service_account_admin") == 1 })
+	e := findWhat(ev, "service_account_admin")
+	if e.Level != "medium" {
 		t.Fatalf("event %+v", e)
 	}
 	u.Close()
@@ -727,7 +728,7 @@ func TestAudit_Cases(t *testing.T) {
 	u2.cfg.AuditServiceAccount = true
 	u2.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
-	if ev2.count(EventInsecureConfig) != 0 {
+	if countWhat(ev2, "service_account_admin") != 0 {
 		t.Fatal("clean account reported")
 	}
 	u2.Close()
@@ -756,9 +757,53 @@ func TestAudit_Cases(t *testing.T) {
 	u5, _, ev5 := newFake(t, cfg5, 0)
 	u5.Start(ctx)
 	u5.Close()
-	if ev5.count(EventInsecureConfig) != 1 || ev5.events[0].Data["what"] != "tls_insecure_skip_verify" {
+	if countWhat(ev5, "tls_insecure_skip_verify") != 1 {
 		t.Fatalf("events %+v", ev5.events)
 	}
+	// Plain ldap:// without StartTLS is reported once per server; ldaps and
+	// StartTLS are not.
+	if countWhat(ev5, "plaintext_upstream") != 1 || findWhat(ev5, "plaintext_upstream").Server != "ldap://a:389" {
+		t.Fatalf("plaintext events %+v", ev5.events)
+	}
+	for _, tc := range []struct {
+		url      string
+		starttls bool
+		want     int
+	}{{"ldaps://a", false, 0}, {"ldap://a", true, 0}, {"ldap://a", false, 1}} {
+		cfg6 := testConfig(tc.url)
+		cfg6.StartTLS = tc.starttls
+		u6, _, ev6 := newFake(t, cfg6, 0)
+		u6.Start(ctx)
+		u6.Close()
+		if got := countWhat(ev6, "plaintext_upstream"); got != tc.want {
+			t.Errorf("%s starttls=%v: %d plaintext_upstream events, want %d", tc.url, tc.starttls, got, tc.want)
+		}
+	}
+}
+
+// countWhat counts insecure_config events with the given what.
+func countWhat(s *eventLog, what string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, e := range s.events {
+		if e.Kind == EventInsecureConfig && e.Data["what"] == what {
+			n++
+		}
+	}
+	return n
+}
+
+// findWhat returns the first insecure_config event with the given what.
+func findWhat(s *eventLog, what string) Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.events {
+		if e.Kind == EventInsecureConfig && e.Data["what"] == what {
+			return e
+		}
+	}
+	return Event{}
 }
 
 func TestCheck_Findings(t *testing.T) {

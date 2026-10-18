@@ -360,8 +360,10 @@ func TestIntegration_AuditAndCheck(t *testing.T) {
 		}
 		u.Start(ctx)
 		time.Sleep(100 * time.Millisecond)
-		if ev.count(upstream.EventInsecureConfig, "") != 0 {
-			t.Fatal("clean account flagged")
+		for _, e := range ev.events {
+			if e.Kind == upstream.EventInsecureConfig && e.Data["what"] == "service_account_admin" {
+				t.Fatal("clean account flagged")
+			}
 		}
 	})
 	t.Run("admin_account_nested", func(t *testing.T) {

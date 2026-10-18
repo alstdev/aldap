@@ -19,7 +19,10 @@ var (
 const usageText = `Usage: aldap <command> [options]
 
 Commands:
+  run       start the proxy (see: aldap run -h)
   check     validate the configuration (see: aldap check -h)
+  gen-ca    create the built-in certificate authority
+  gen-cert  issue a server certificate from the built-in CA
   version   print build information
   help      print this help
 `
@@ -35,8 +38,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case "run":
+		return runRun(args[1:], stdout, stderr)
 	case "check":
 		return runCheck(args[1:], stdout, stderr)
+	case "gen-ca":
+		return runGenCA(args[1:], stdout, stderr)
+	case "gen-cert":
+		return runGenCert(args[1:], stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, versionLine())
 		return 0
