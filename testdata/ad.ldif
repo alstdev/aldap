@@ -1,0 +1,982 @@
+# ALDAP test fixture (TESTING.md): AD-like directory for internal/testdir.
+# 25 users (3 disabled, 1 locked, 1 must-change), 6 computers,
+# groups Staff ⊃ Managers ⊃ Directors, Contractors, admin groups for the service-account audit.
+# Passwords: userPassword = <sAMAccountName>-pass. Test data only.
+version: 1
+
+dn: DC=test,DC=aldap
+objectClass: top
+objectClass: domain
+objectClass: domainDNS
+dc: test
+name: test
+objectGUID:: L/UJjsfoUc+mI4iSBZEa4w==
+
+dn: CN=Users,DC=test,DC=aldap
+objectClass: top
+objectClass: container
+cn: Users
+name: Users
+objectGUID:: fyqHLhoaViSftbOcukok7w==
+
+dn: CN=Builtin,DC=test,DC=aldap
+objectClass: top
+objectClass: container
+cn: Builtin
+name: Builtin
+objectGUID:: Vhq6Fk+TXAmxLr6ETRkCrQ==
+
+dn: CN=Computers,DC=test,DC=aldap
+objectClass: top
+objectClass: container
+cn: Computers
+name: Computers
+objectGUID:: Eip+uYZUWNq0tigDf2pjew==
+
+dn: OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: organizationalUnit
+ou: Office
+name: Office
+objectGUID:: jaFjrV25XOSQtKI7iDqNxA==
+
+dn: OU=Branch,DC=test,DC=aldap
+objectClass: top
+objectClass: organizationalUnit
+ou: Branch
+name: Branch
+objectGUID:: pho1pmk+VzGfgGML7muLBg==
+
+dn: CN=Alice Adams,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Alice Adams
+sn: Adams
+givenName: Alice
+displayName: Alice Adams
+name: Alice Adams
+sAMAccountName: alice.adams
+userPrincipalName: alice.adams@test.aldap
+mail: alice.adams@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: IT
+title: Director
+sAMAccountType: 805306368
+userPassword: alice.adams-pass
+objectGUID:: GlZeAZC1X5G1mHb3LykjNw==
+memberOf: CN=Directors,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Bob Brown,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Bob Brown
+sn: Brown
+givenName: Bob
+displayName: Bob Brown
+name: Bob Brown
+sAMAccountName: bob.brown
+userPrincipalName: bob.brown@test.aldap
+mail: bob.brown@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: IT
+title: Manager
+sAMAccountType: 805306368
+userPassword: bob.brown-pass
+objectGUID:: sojcFzBYWDKWLEPRF+aTPQ==
+memberOf: CN=Managers,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Carol Clark,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Carol Clark
+sn: Clark
+givenName: Carol
+displayName: Carol Clark
+name: Carol Clark
+sAMAccountName: carol.clark
+userPrincipalName: carol.clark@test.aldap
+mail: carol.clark@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 514
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: Finance
+title: Accountant
+sAMAccountType: 805306368
+userPassword: carol.clark-pass
+objectGUID:: 4DxfdHiGUZql9E5/PFLkgQ==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Dan Davis,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Dan Davis
+sn: Davis
+givenName: Dan
+displayName: Dan Davis
+name: Dan Davis
+sAMAccountName: dan.davis
+userPrincipalName: dan.davis@test.aldap
+mail: dan.davis@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: Finance
+title: Manager
+sAMAccountType: 805306368
+userPassword: dan.davis-pass
+objectGUID:: YGEOmQGiVv6krvYEC9ihpQ==
+memberOf: CN=Managers,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Eve Evans,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Eve Evans
+sn: Evans
+givenName: Eve
+displayName: Eve Evans
+name: Eve Evans
+sAMAccountName: eve.evans
+userPrincipalName: eve.evans@test.aldap
+mail: eve.evans@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 133710000000000000
+accountExpires: 0
+department: HR
+title: Specialist
+sAMAccountType: 805306368
+userPassword: eve.evans-pass
+objectGUID:: PgRxzB/IVFKAdXtaVg7grg==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Frank Foster,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Frank Foster
+sn: Foster
+givenName: Frank
+displayName: Frank Foster
+name: Frank Foster
+sAMAccountName: frank.foster
+userPrincipalName: frank.foster@test.aldap
+mail: frank.foster@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: HR
+title: Director
+sAMAccountType: 805306368
+userPassword: frank.foster-pass
+objectGUID:: tlaReasNUoyOwyT+nLl9bA==
+memberOf: CN=Directors,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Grace Green,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Grace Green
+sn: Green
+givenName: Grace
+displayName: Grace Green
+name: Grace Green
+sAMAccountName: grace.green
+userPrincipalName: grace.green@test.aldap
+mail: grace.green@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: Sales
+title: Representative
+sAMAccountType: 805306368
+userPassword: grace.green-pass
+objectGUID:: ljHaasV8VUGBYDJ6DkS++w==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Hank Hill,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Hank Hill
+sn: Hill
+givenName: Hank
+displayName: Hank Hill
+name: Hank Hill
+sAMAccountName: hank.hill
+userPrincipalName: hank.hill@test.aldap
+mail: hank.hill@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: Sales
+title: Manager
+sAMAccountType: 805306368
+userPassword: hank.hill-pass
+objectGUID:: PLwC9iIEVqCmHSiqn2SpQQ==
+memberOf: CN=Managers,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Ivy Irwin,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Ivy Irwin
+sn: Irwin
+givenName: Ivy
+displayName: Ivy Irwin
+name: Ivy Irwin
+sAMAccountName: ivy.irwin
+userPrincipalName: ivy.irwin@test.aldap
+mail: ivy.irwin@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: IT
+title: Engineer
+sAMAccountType: 805306368
+userPassword: ivy.irwin-pass
+objectGUID:: ehG2rAeHXdu6P3mNPLIOGA==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Jack Jones,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Jack Jones
+sn: Jones
+givenName: Jack
+displayName: Jack Jones
+name: Jack Jones
+sAMAccountName: jack.jones
+userPrincipalName: jack.jones@test.aldap
+mail: jack.jones@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 514
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: IT
+title: Engineer
+sAMAccountType: 805306368
+userPassword: jack.jones-pass
+objectGUID:: 1f38lpxmVRWe5FLjvm0VWA==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Kate King,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Kate King
+sn: King
+givenName: Kate
+displayName: Kate King
+name: Kate King
+sAMAccountName: kate.king
+userPrincipalName: kate.king@test.aldap
+mail: kate.king@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: Legal
+title: Counsel
+sAMAccountType: 805306368
+userPassword: kate.king-pass
+objectGUID:: MNYCiKutXlaEr2aHJ4Zu/w==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Leo Lewis,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Leo Lewis
+sn: Lewis
+givenName: Leo
+displayName: Leo Lewis
+name: Leo Lewis
+sAMAccountName: leo.lewis
+userPrincipalName: leo.lewis@test.aldap
+mail: leo.lewis@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 0
+lockoutTime: 0
+accountExpires: 0
+department: IT
+title: Engineer
+sAMAccountType: 805306368
+userPassword: leo.lewis-pass
+objectGUID:: SuNNQNkEXSa68kg3nACeQg==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Mia Moore,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Mia Moore
+sn: Moore
+givenName: Mia
+displayName: Mia Moore
+name: Mia Moore
+sAMAccountName: mia.moore
+userPrincipalName: mia.moore@test.aldap
+mail: mia.moore@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: Sales
+title: Representative
+sAMAccountType: 805306368
+userPassword: mia.moore-pass
+objectGUID:: jTMKiQ8wUTejkvyUJxJdqw==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Nick Nelson,OU=Office,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Nick Nelson
+sn: Nelson
+givenName: Nick
+displayName: Nick Nelson
+name: Nick Nelson
+sAMAccountName: nick.nelson
+userPrincipalName: nick.nelson@test.aldap
+mail: nick.nelson@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: Finance
+title: Analyst
+sAMAccountType: 805306368
+userPassword: nick.nelson-pass
+objectGUID:: hTBxAM99W/q9z+HwNTjqXw==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Olga Owens,OU=Branch,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Olga Owens
+sn: Owens
+givenName: Olga
+displayName: Olga Owens
+name: Olga Owens
+sAMAccountName: olga.owens
+userPrincipalName: olga.owens@test.aldap
+mail: olga.owens@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: Sales
+title: Manager
+sAMAccountType: 805306368
+userPassword: olga.owens-pass
+objectGUID:: hTAoVwjJVPadjJktQwms7w==
+memberOf: CN=Managers,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Paul Price,OU=Branch,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Paul Price
+sn: Price
+givenName: Paul
+displayName: Paul Price
+name: Paul Price
+sAMAccountName: paul.price
+userPrincipalName: paul.price@test.aldap
+mail: paul.price@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: Sales
+title: Representative
+sAMAccountType: 805306368
+userPassword: paul.price-pass
+objectGUID:: 6/m9dNEkWs+UcQgwBNLeMQ==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Quinn Quest,OU=Branch,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Quinn Quest
+sn: Quest
+givenName: Quinn
+displayName: Quinn Quest
+name: Quinn Quest
+sAMAccountName: quinn.quest
+userPrincipalName: quinn.quest@test.aldap
+mail: quinn.quest@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 514
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: IT
+title: Engineer
+sAMAccountType: 805306368
+userPassword: quinn.quest-pass
+objectGUID:: skz0LbYBWLqqdZvWv0d/NQ==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Rita Reed,OU=Branch,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Rita Reed
+sn: Reed
+givenName: Rita
+displayName: Rita Reed
+name: Rita Reed
+sAMAccountName: rita.reed
+userPrincipalName: rita.reed@test.aldap
+mail: rita.reed@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: Support
+title: Agent
+sAMAccountType: 805306368
+userPassword: rita.reed-pass
+objectGUID:: iiPspNj7Ua6vMkYfkANNMg==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Sam Stone,OU=Branch,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Sam Stone
+sn: Stone
+givenName: Sam
+displayName: Sam Stone
+name: Sam Stone
+sAMAccountName: sam.stone
+userPrincipalName: sam.stone@test.aldap
+mail: sam.stone@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: Support
+title: Agent
+sAMAccountType: 805306368
+userPassword: sam.stone-pass
+objectGUID:: 6rNaD0kbVVKib6xcyC1DIw==
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Tina Turner,OU=Branch,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Tina Turner
+sn: Turner
+givenName: Tina
+displayName: Tina Turner
+name: Tina Turner
+sAMAccountName: tina.turner
+userPrincipalName: tina.turner@test.aldap
+mail: tina.turner@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: External
+title: Contractor
+sAMAccountType: 805306368
+userPassword: tina.turner-pass
+objectGUID:: Kx+a/D6QXR2uIlR7uLZEMQ==
+memberOf: CN=Contractors,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Uri Usher,OU=Branch,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Uri Usher
+sn: Usher
+givenName: Uri
+displayName: Uri Usher
+name: Uri Usher
+sAMAccountName: uri.usher
+userPrincipalName: uri.usher@test.aldap
+mail: uri.usher@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: External
+title: Contractor
+sAMAccountType: 805306368
+userPassword: uri.usher-pass
+objectGUID:: ISo5eFw8UaOZ/coHWYWMsg==
+memberOf: CN=Contractors,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Vera Vance,OU=Branch,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Vera Vance
+sn: Vance
+givenName: Vera
+displayName: Vera Vance
+name: Vera Vance
+sAMAccountName: vera.vance
+userPrincipalName: vera.vance@test.aldap
+mail: vera.vance@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: External
+title: Contractor
+sAMAccountType: 805306368
+userPassword: vera.vance-pass
+objectGUID:: bq9Wg7bfVD6sTBPfxo6k3w==
+memberOf: CN=Contractors,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=Administrator,CN=Users,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: Administrator
+sn: Administrator
+givenName: Administrator
+displayName: Administrator
+name: Administrator
+sAMAccountName: Administrator
+userPrincipalName: Administrator@test.aldap
+mail: Administrator@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 66048
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: IT
+title: Built-in account for administering the domain
+sAMAccountType: 805306368
+userPassword: Administrator-pass
+objectGUID:: 5zRU3XNXV4eICSbgo/rWbA==
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Admins,CN=Users,DC=test,DC=aldap
+memberOf: CN=Enterprise Admins,CN=Users,DC=test,DC=aldap
+memberOf: CN=Administrators,CN=Builtin,DC=test,DC=aldap
+
+dn: CN=svc-aldap,CN=Users,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: svc-aldap
+sn: svc-aldap
+givenName: svc-aldap
+displayName: svc-aldap
+name: svc-aldap
+sAMAccountName: svc-aldap
+userPrincipalName: svc-aldap@test.aldap
+mail: svc-aldap@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: IT
+title: ALDAP read-only service account
+sAMAccountType: 805306368
+userPassword: svc-aldap-pass
+objectGUID:: mxIGukEnWdO7oR7zG/dRxw==
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+
+dn: CN=svc-admin,CN=Users,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+cn: svc-admin
+sn: svc-admin
+givenName: svc-admin
+displayName: svc-admin
+name: svc-admin
+sAMAccountName: svc-admin
+userPrincipalName: svc-admin@test.aldap
+mail: svc-admin@test.aldap
+objectCategory: CN=Person,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 512
+primaryGroupID: 513
+pwdLastSet: 133700000000000000
+lockoutTime: 0
+accountExpires: 0
+department: IT
+title: Service account that is (wrongly) a Domain Admin
+sAMAccountType: 805306368
+userPassword: svc-admin-pass
+objectGUID:: gyjsEOZBVQSFQI2AK2MVcw==
+memberOf: CN=Domain Users,CN=Users,DC=test,DC=aldap
+memberOf: CN=Domain Admins,CN=Users,DC=test,DC=aldap
+
+dn: CN=PC-01,CN=Computers,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+objectClass: computer
+cn: PC-01
+name: PC-01
+sAMAccountName: PC-01$
+dNSHostName: pc-01.test.aldap
+objectCategory: CN=Computer,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 4096
+primaryGroupID: 515
+operatingSystem: Windows 11 Pro
+sAMAccountType: 805306369
+objectGUID:: 5u4PPKzYUUikr4Zd85KlUg==
+
+dn: CN=PC-02,CN=Computers,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+objectClass: computer
+cn: PC-02
+name: PC-02
+sAMAccountName: PC-02$
+dNSHostName: pc-02.test.aldap
+objectCategory: CN=Computer,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 4096
+primaryGroupID: 515
+operatingSystem: Windows 11 Pro
+sAMAccountType: 805306369
+objectGUID:: aOnrFf5WUUWUnh3dLy5E/w==
+
+dn: CN=PC-03,CN=Computers,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+objectClass: computer
+cn: PC-03
+name: PC-03
+sAMAccountName: PC-03$
+dNSHostName: pc-03.test.aldap
+objectCategory: CN=Computer,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 4096
+primaryGroupID: 515
+operatingSystem: Windows 11 Pro
+sAMAccountType: 805306369
+objectGUID:: ggsMHskQXjef0g+xFMQIhw==
+
+dn: CN=PC-04,CN=Computers,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+objectClass: computer
+cn: PC-04
+name: PC-04
+sAMAccountName: PC-04$
+dNSHostName: pc-04.test.aldap
+objectCategory: CN=Computer,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 4096
+primaryGroupID: 515
+operatingSystem: Windows 11 Pro
+sAMAccountType: 805306369
+objectGUID:: ltkIzA4TX/q1NJxmc6rvTA==
+
+dn: CN=PC-05,CN=Computers,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+objectClass: computer
+cn: PC-05
+name: PC-05
+sAMAccountName: PC-05$
+dNSHostName: pc-05.test.aldap
+objectCategory: CN=Computer,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 4096
+primaryGroupID: 515
+operatingSystem: Windows 11 Pro
+sAMAccountType: 805306369
+objectGUID:: 41wxP5BVW8Sd0gIjsTeoFw==
+
+dn: CN=PC-06,CN=Computers,DC=test,DC=aldap
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: user
+objectClass: computer
+cn: PC-06
+name: PC-06
+sAMAccountName: PC-06$
+dNSHostName: pc-06.test.aldap
+objectCategory: CN=Computer,CN=Schema,CN=Configuration,DC=test,DC=aldap
+userAccountControl: 4096
+primaryGroupID: 515
+operatingSystem: Windows 11 Pro
+sAMAccountType: 805306369
+objectGUID:: PHT3BvFUVPeS6LMiW3Vklg==
+
+dn: CN=Staff,CN=Users,DC=test,DC=aldap
+objectClass: top
+objectClass: group
+cn: Staff
+name: Staff
+sAMAccountName: Staff
+objectCategory: CN=Group,CN=Schema,CN=Configuration,DC=test,DC=aldap
+groupType: -2147483646
+sAMAccountType: 268435456
+objectGUID:: pWhchNXFV+SH5BaMe9NN0Q==
+member: CN=Carol Clark,OU=Office,DC=test,DC=aldap
+member: CN=Eve Evans,OU=Office,DC=test,DC=aldap
+member: CN=Grace Green,OU=Office,DC=test,DC=aldap
+member: CN=Ivy Irwin,OU=Office,DC=test,DC=aldap
+member: CN=Jack Jones,OU=Office,DC=test,DC=aldap
+member: CN=Kate King,OU=Office,DC=test,DC=aldap
+member: CN=Leo Lewis,OU=Office,DC=test,DC=aldap
+member: CN=Mia Moore,OU=Office,DC=test,DC=aldap
+member: CN=Nick Nelson,OU=Office,DC=test,DC=aldap
+member: CN=Paul Price,OU=Branch,DC=test,DC=aldap
+member: CN=Quinn Quest,OU=Branch,DC=test,DC=aldap
+member: CN=Rita Reed,OU=Branch,DC=test,DC=aldap
+member: CN=Sam Stone,OU=Branch,DC=test,DC=aldap
+member: CN=Managers,CN=Users,DC=test,DC=aldap
+
+dn: CN=Managers,CN=Users,DC=test,DC=aldap
+objectClass: top
+objectClass: group
+cn: Managers
+name: Managers
+sAMAccountName: Managers
+objectCategory: CN=Group,CN=Schema,CN=Configuration,DC=test,DC=aldap
+groupType: -2147483646
+sAMAccountType: 268435456
+objectGUID:: UtzYt+TlV7WIDhQ36HnBGQ==
+member: CN=Bob Brown,OU=Office,DC=test,DC=aldap
+member: CN=Dan Davis,OU=Office,DC=test,DC=aldap
+member: CN=Hank Hill,OU=Office,DC=test,DC=aldap
+member: CN=Olga Owens,OU=Branch,DC=test,DC=aldap
+member: CN=Directors,CN=Users,DC=test,DC=aldap
+memberOf: CN=Staff,CN=Users,DC=test,DC=aldap
+
+dn: CN=Directors,CN=Users,DC=test,DC=aldap
+objectClass: top
+objectClass: group
+cn: Directors
+name: Directors
+sAMAccountName: Directors
+objectCategory: CN=Group,CN=Schema,CN=Configuration,DC=test,DC=aldap
+groupType: -2147483646
+sAMAccountType: 268435456
+objectGUID:: 6c74nsr1VD6ZbFhCoZEALg==
+member: CN=Alice Adams,OU=Office,DC=test,DC=aldap
+member: CN=Frank Foster,OU=Office,DC=test,DC=aldap
+memberOf: CN=Managers,CN=Users,DC=test,DC=aldap
+
+dn: CN=Contractors,CN=Users,DC=test,DC=aldap
+objectClass: top
+objectClass: group
+cn: Contractors
+name: Contractors
+sAMAccountName: Contractors
+objectCategory: CN=Group,CN=Schema,CN=Configuration,DC=test,DC=aldap
+groupType: -2147483646
+sAMAccountType: 268435456
+objectGUID:: swyoiEjRX2KCBvJIqivMuQ==
+member: CN=Tina Turner,OU=Branch,DC=test,DC=aldap
+member: CN=Uri Usher,OU=Branch,DC=test,DC=aldap
+member: CN=Vera Vance,OU=Branch,DC=test,DC=aldap
+
+dn: CN=Domain Users,CN=Users,DC=test,DC=aldap
+objectClass: top
+objectClass: group
+cn: Domain Users
+name: Domain Users
+sAMAccountName: Domain Users
+objectCategory: CN=Group,CN=Schema,CN=Configuration,DC=test,DC=aldap
+groupType: -2147483646
+sAMAccountType: 268435456
+objectGUID:: usd5kGqHVIypZ2jKDYAdDQ==
+member: CN=Alice Adams,OU=Office,DC=test,DC=aldap
+member: CN=Bob Brown,OU=Office,DC=test,DC=aldap
+member: CN=Carol Clark,OU=Office,DC=test,DC=aldap
+member: CN=Dan Davis,OU=Office,DC=test,DC=aldap
+member: CN=Eve Evans,OU=Office,DC=test,DC=aldap
+member: CN=Frank Foster,OU=Office,DC=test,DC=aldap
+member: CN=Grace Green,OU=Office,DC=test,DC=aldap
+member: CN=Hank Hill,OU=Office,DC=test,DC=aldap
+member: CN=Ivy Irwin,OU=Office,DC=test,DC=aldap
+member: CN=Jack Jones,OU=Office,DC=test,DC=aldap
+member: CN=Kate King,OU=Office,DC=test,DC=aldap
+member: CN=Leo Lewis,OU=Office,DC=test,DC=aldap
+member: CN=Mia Moore,OU=Office,DC=test,DC=aldap
+member: CN=Nick Nelson,OU=Office,DC=test,DC=aldap
+member: CN=Olga Owens,OU=Branch,DC=test,DC=aldap
+member: CN=Paul Price,OU=Branch,DC=test,DC=aldap
+member: CN=Quinn Quest,OU=Branch,DC=test,DC=aldap
+member: CN=Rita Reed,OU=Branch,DC=test,DC=aldap
+member: CN=Sam Stone,OU=Branch,DC=test,DC=aldap
+member: CN=Tina Turner,OU=Branch,DC=test,DC=aldap
+member: CN=Uri Usher,OU=Branch,DC=test,DC=aldap
+member: CN=Vera Vance,OU=Branch,DC=test,DC=aldap
+member: CN=Administrator,CN=Users,DC=test,DC=aldap
+member: CN=svc-aldap,CN=Users,DC=test,DC=aldap
+member: CN=svc-admin,CN=Users,DC=test,DC=aldap
+
+dn: CN=Domain Admins,CN=Users,DC=test,DC=aldap
+objectClass: top
+objectClass: group
+cn: Domain Admins
+name: Domain Admins
+sAMAccountName: Domain Admins
+objectCategory: CN=Group,CN=Schema,CN=Configuration,DC=test,DC=aldap
+groupType: -2147483646
+sAMAccountType: 268435456
+objectGUID:: +HAgbRwxXeqLfOwBv86qoQ==
+member: CN=Administrator,CN=Users,DC=test,DC=aldap
+member: CN=svc-admin,CN=Users,DC=test,DC=aldap
+memberOf: CN=Administrators,CN=Builtin,DC=test,DC=aldap
+
+dn: CN=Enterprise Admins,CN=Users,DC=test,DC=aldap
+objectClass: top
+objectClass: group
+cn: Enterprise Admins
+name: Enterprise Admins
+sAMAccountName: Enterprise Admins
+objectCategory: CN=Group,CN=Schema,CN=Configuration,DC=test,DC=aldap
+groupType: -2147483646
+sAMAccountType: 268435456
+objectGUID:: ZkKuZmxmVsaUXbhuNpjnzg==
+member: CN=Administrator,CN=Users,DC=test,DC=aldap
+
+dn: CN=Administrators,CN=Builtin,DC=test,DC=aldap
+objectClass: top
+objectClass: group
+cn: Administrators
+name: Administrators
+sAMAccountName: Administrators
+objectCategory: CN=Group,CN=Schema,CN=Configuration,DC=test,DC=aldap
+groupType: -2147483643
+sAMAccountType: 268435456
+objectGUID:: uPNwG5dbUWiYb4es+vzYBQ==
+member: CN=Administrator,CN=Users,DC=test,DC=aldap
+member: CN=Domain Admins,CN=Users,DC=test,DC=aldap
+
+dn: CN=Account Operators,CN=Builtin,DC=test,DC=aldap
+objectClass: top
+objectClass: group
+cn: Account Operators
+name: Account Operators
+sAMAccountName: Account Operators
+objectCategory: CN=Group,CN=Schema,CN=Configuration,DC=test,DC=aldap
+groupType: -2147483643
+sAMAccountType: 268435456
+objectGUID:: xzeO7qRtUBiQ5eXSXe/OjQ==

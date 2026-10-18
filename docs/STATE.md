@@ -2,6 +2,15 @@
 
 Оновлюється наприкінці кожного етапу (5–10 рядків). Читати першим після `CLAUDE.md`.
 
+## Stage 3 — Upstream, пул, failover (завершено 2026-10-18)
+- Зроблено: `internal/upstream` (`New/Start/Close`, `Search` з paging і failover, `UserBind` на bind-only пулі з `BindError{Reason, Data}`, `RootDSE`, `AuditServiceAccount`, `Check` для `--online`, `Status/Healthy`; стани `unknown/up/down` з порогами, події `upstream_down/up/insecure_config` через `EventSink`; `SerializeFilter` — абсолютні фільтри не йдуть в upstream). `internal/testdir` (gldap + TCP-проксі, LDIF-фікстура `testdata/ad.ldif`, paging, 803/804/1941, AD bind-коди, хуки `Calls/SetDelay/Kill/Restart`). `aldap check --online`. Опис — `docs/upstream.md`.
+- Покриття: `upstream` 92.5%, `testdir` 93.4%, `cmd/aldap` 91%. Інтеграційні (`-tags integration`): failover/повернення на primary, 2 сторінки paging, reason-мапінг, ldaps/StartTLS, аудит, `check --online`.
+- Залежності: `gldap` v0.1.14, `go-ldap/v3` v3.4.14 (v3.4.15 вимагає Go 1.26), `go-hclog` (MPL-2.0, через gldap).
+- Рішення (DECISIONS): StartTLS-невдача = збій з'єднання без fallback; лише транспортні помилки рахуються проти сервера; bind-only пул без явного reset; referrals не follow; errcheck вимкнено для тестів/testdir.
+- Відкрите: `make licenses` локально лише з toolchain 1.25 у PATH; `govulncheck@latest` вимагає Go ≥ 1.26 (CI через GOTOOLCHAIN=auto); URL ліцензії `yaml.v3` у звіті не резолвився офлайн — звірити з CI.
+- Зупинився: після коміту `stage-3: upstream pool and failover` у гілці `claude/relaxed-maxwell-e19c85`, PR у main.
+- Далі: Stage 4 — `internal/listener` (gldap-сервер, TLS/StartTLS, маршрутизація до профілю, BER↔AST фільтрів, `unwillingToPerform` на write-операції).
+
 ## Stage 2 — Парсер фільтрів і DN (завершено 2026-10-18)
 - Зроблено: `internal/ldapfilter` — парсер RFC 4515 (`Parse`, `ParseWithLimits`, ліміти глибини 20/64 і довжини 4096), `String()`/`Normalize()` (канонічна форма для `filter_norm`), `EscapeValue`/`UnescapeValue`; операції `Inject`, `Exclude`, `MapAttrs`, `Walk`, `Split` (Upstream/Local/Denied → `(|)`), `Simplify`; DN RFC 4514 (`ParseDN`, `String`, `Equal`, `Canonical`, `IsUnder`, `Rewrite`, `Parent/Child`, `EscapeRDNValue`); fuzz `FuzzParseFilter`/`FuzzParseDN`; корпус 334 фільтри у `internal/ldapfilter/testdata/filters.txt`. `config.Validator` тепер використовує ці парсери; структурні перевірки видалено. Опис — `docs/ldapfilter.md`.
 - Покриття: `ldapfilter` 98.9%. Fuzz 2 хв на обидві цілі — без падінь.

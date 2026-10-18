@@ -35,13 +35,15 @@
 
 ## Stage 3 — Upstream, пул, failover
 Читати: SPEC §2.1, §3.4 `[upstream.<name>]`, §5.2, §5.3; TESTING «In-memory тестовий каталог», «Failover, кеш».
-- [ ] `internal/upstream`: URL-парсинг `ldap://`/`ldaps://`, StartTLS, CA, SNI; пул з'єднань (сервісний bind) + окремий bind-only пул; таймаути.
-- [ ] Health-check (`rootdse`/`bind`/`search`), стани `up/down`, пороги, `prefer_primary`/`roundrobin`, події `upstream_down/up`.
-- [ ] Paged search (control 1.2.840.113556.1.4.319), referrals ігноруються (`kind=ad`), `generic` — follow вимкнено.
-- [ ] Мапінг кодів bind-помилок AD (52e/533/775/701/773) у `reason`.
-- [ ] Аудит сервісного акаунта (`audit_service_account`).
-- [ ] `aldap check --online`.
-**КП:** інтеграційні тести на `internal/testdir` (два in-memory сервери): failover при зупинці першого, повернення на primary, paged по 2 сторінки, мапінг reason; покриття ≥ 80%.
+- [x] `internal/upstream`: URL-парсинг `ldap://`/`ldaps://`, StartTLS, CA, SNI; пул з'єднань (сервісний bind) + окремий bind-only пул; таймаути.
+- [x] Health-check (`rootdse`/`bind`/`search`), стани `up/down`, пороги, `prefer_primary`/`roundrobin`, події `upstream_down/up`.
+- [x] Paged search (control 1.2.840.113556.1.4.319), referrals ігноруються (`kind=ad`), `generic` — follow вимкнено.
+- [x] Мапінг кодів bind-помилок AD (52e/533/775/701/773) у `reason`.
+- [x] Аудит сервісного акаунта (`audit_service_account`).
+- [x] `aldap check --online`.
+- [x] Абсолютні фільтри RFC 4526 ніколи не йдуть в upstream (`SerializeFilter`: false → порожній результат без запиту, true → `(objectClass=*)`).
+- [x] `internal/testdir` за TESTING.md: два in-memory сервери, AD-схема з `testdata/ad.ldif`, paging, chain/bit-match, AD-коди bind, хуки (лічильники, затримка, Kill/Restart).
+**КП:** інтеграційні тести на `internal/testdir` (два in-memory сервери): failover при зупинці першого, повернення на primary, paged по 2 сторінки, мапінг reason; покриття ≥ 80%. — виконано (`upstream` 92%, `testdir` 93%).
 
 ## Stage 4 — Listener і базовий проксі (без віртуалізації)
 Читати: SPEC §3.4 `[server]`, `[tls]`, `[profile.<name>]`, §4.2, §4.3, §9, §12; TESTING «Транспорт», «Bind», «Сумісність».
