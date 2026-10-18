@@ -22,15 +22,15 @@
 - [x] `Validate()`: усі правила §3.5 (офлайн-частина). Повідомлення з шляхом до ключа (`profile.virola.attrs.allow: '*' is not allowed`).
 - [x] `aldap check` (офлайн), `--json` вивід.
 - [x] `docs/config.md` генерується/перевіряється тестом `TestConfigDocsInSync`.
-- OPEN: перевірка синтаксису фільтрів/DN поки структурна (дужки, `attr=value`); парсери RFC 4515/4514 підключаються у Stage 2 через `Validator.ParseFilter/ParseDN`.
+- [x] (закрито у Stage 2) синтаксис фільтрів/DN перевіряється парсерами RFC 4515/4514 з `internal/ldapfilter` через `Validator.ParseFilter/ParseDN`.
 **КП:** unit-покриття `config` ≥ 85%; `aldap check` на `aldap.toml.example` — 0 помилок; тести на кожне правило валідації; тест «секрет у двох джерелах → помилка».
 
 ## Stage 2 — Парсер фільтрів і DN
 Читати: SPEC §0, §4.2, §9, §12; TESTING «Рівні», «Безпека».
-- [ ] `internal/ldapfilter`: парсер RFC 4515 у AST (and/or/not/equality/substring/ge/le/present/approx/extensible з dnAttributes і matching rule OID), серіалізатор (канонічна нормалізація: lower-case атрибутів, стабільний порядок у and/or для `filter_norm`), escape/unescape, ліміти глибини/довжини.
-- [ ] Операції над AST: `Inject(and)`, `Exclude(not)`, `MapAttrs(map)`, `Walk`, `Split(executable, postfilter)` — відділити терми, які не можна виконати в upstream (computed/virtual memberOf/denied → `FALSE`).
-- [ ] DN: парсер/нормалізатор (RFC 4514), `IsUnder(base)`, `Rewrite(oldBase→newBase)`, RDN escape.
-- [ ] Fuzz-тести (`go test -fuzz`) для парсера фільтрів і DN; corpus у `testdata/fuzz`.
+- [x] `internal/ldapfilter`: парсер RFC 4515 у AST (and/or/not/equality/substring/ge/le/present/approx/extensible з dnAttributes і matching rule OID), серіалізатор (канонічна нормалізація: lower-case атрибутів, стабільний порядок у and/or для `filter_norm`), escape/unescape, ліміти глибини/довжини.
+- [x] Операції над AST: `Inject(and)`, `Exclude(not)`, `MapAttrs(map)`, `Walk`, `Split(executable, postfilter)` — відділити терми, які не можна виконати в upstream (computed/virtual memberOf/denied → `FALSE`).
+- [x] DN: парсер/нормалізатор (RFC 4514), `IsUnder(base)`, `Rewrite(oldBase→newBase)`, RDN escape.
+- [x] Fuzz-тести (`go test -fuzz`) для парсера фільтрів і DN; corpus у `testdata/fuzz`.
 **КП:** покриття ≥ 90%; fuzz 2 хв без падінь; round-trip parse→serialize→parse ідентичний для corpus із 200 фільтрів (включно з AD bit-match `:1.2.840.113556.1.4.803:`).
 
 ## Stage 3 — Upstream, пул, failover

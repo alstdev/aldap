@@ -5,7 +5,9 @@
 #   ./build.sh --linux     static linux binaries (amd64, arm64) into dist/
 #   ./build.sh --windows   windows/amd64 binaries into dist/
 #   ./build.sh --all       everything above
-# Env overrides: DHI_GOLANG_TAG, DHI_STATIC_TAG, IMAGE, VERSION, NO_SIGN=1, PUSH=1
+# Env overrides: DHI_GOLANG_TAG, DHI_STATIC_TAG, IMAGE, VERSION, NO_SIGN=1, PUSH=1,
+#   ATTEST=1 (BuildKit provenance/SBOM attestations; needs a docker-container
+#   builder or the containerd image store, so it is off by default)
 set -euo pipefail
 
 IMAGE="${IMAGE:-aldap/aldap}"
@@ -71,6 +73,10 @@ docker_build() {
       die "cannot pull dhi.io/static:${DHI_STATIC_TAG}. Set DHI_STATIC_TAG to a tag listed in the DHI catalog"
     fi
   fi
+  local attest=()
+  if [ "${ATTEST:-0}" = "1" ]; then
+    attest=(--provenance=true --sbom=true)
+  fi
   docker build \
     --target "$target" \
     --build-arg "DHI_GOLANG_TAG=${DHI_GOLANG_TAG}" \
@@ -79,7 +85,7 @@ docker_build() {
     --build-arg "VERSION=${VERSION}" \
     --build-arg "COMMIT=${COMMIT}" \
     --build-arg "DATE=${DATE}" \
-    --provenance=true --sbom=true \
+    "${attest[@]}" \
     -t "$tag" .
   [ "$target" = "dhi" ] && docker tag "$tag" "${IMAGE}:latest"
   sbom_and_sign "$tag"

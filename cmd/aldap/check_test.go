@@ -62,6 +62,7 @@ func TestRunCheck_Cases(t *testing.T) {
 		{name: "unknown_key", args: []string{"--config", unknown}, wantCode: 1, wantOut: "ERROR config: " + unknown + ": unknown configuration key: server.log_levl"},
 		{name: "missing_explicit", args: []string{"--config", filepath.Join(t.TempDir(), "nope.toml")}, wantCode: 1, wantOut: "ERROR config:"},
 		{name: "env_path", env: map[string]string{"ALDAP_CONFIG": valid}, wantCode: 0, wantOut: "OK: " + valid},
+		{name: "env_only_no_default_file", wantOut: ": " + envOnlySource + ","},
 		{name: "env_override_breaks", args: []string{"--config", valid}, env: map[string]string{"ALDAP_SERVER_LOG_LEVEL": "loud"}, wantCode: 1, wantOut: "server.log_level"},
 		{name: "online_unsupported", args: []string{"--config", valid, "--online"}, wantCode: 2, wantErr: "not implemented"},
 		{name: "extra_arg", args: []string{"--config", valid, "extra"}, wantCode: 2, wantErr: "unexpected argument"},

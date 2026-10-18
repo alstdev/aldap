@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/alstdev/aldap/internal/secret"
+
+	"github.com/alstdev/aldap/internal/ldapfilter"
 )
 
 // Issue is one validation finding, located by the dotted key path.
@@ -65,11 +67,11 @@ type Validator struct {
 	// Offline `aldap check` leaves it false because such files are often
 	// mounted only at run time (/run/secrets); `aldap run` sets it.
 	StrictFiles bool
-	// ParseFilter checks LDAP filter syntax; defaults to a structural check
-	// until the RFC 4515 parser is wired in.
+	// ParseFilter checks LDAP filter syntax; defaults to the RFC 4515
+	// parser of internal/ldapfilter.
 	ParseFilter func(string) error
-	// ParseDN checks DN syntax; defaults to a structural check until the
-	// RFC 4514 parser is wired in.
+	// ParseDN checks DN syntax; defaults to the RFC 4514 parser of
+	// internal/ldapfilter.
 	ParseDN func(string) error
 }
 
@@ -112,10 +114,10 @@ func (v Validator) withDefaults() Validator {
 		v.Now = time.Now
 	}
 	if v.ParseFilter == nil {
-		v.ParseFilter = basicFilterSyntax
+		v.ParseFilter = filterSyntax
 	}
 	if v.ParseDN == nil {
-		v.ParseDN = basicDNSyntax
+		v.ParseDN = dnSyntax
 	}
 	return v
 }
@@ -219,66 +221,16 @@ func (v Validator) checkSecret(rep *Report, path string, src secret.Source, requ
 	}
 }
 
-// basicFilterSyntax is a structural stand-in for the RFC 4515 parser.
-func basicFilterSyntax(s string) error {
-	if !strings.HasPrefix(s, "(") || !strings.HasSuffix(s, ")") {
-		return fmt.Errorf("filter must be enclosed in parentheses")
-	}
-	depth := 0
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '\\':
-			i++
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth < 0 {
-				return fmt.Errorf("unbalanced parentheses")
-			}
-			if depth == 0 && i != len(s)-1 {
-				return fmt.Errorf("filter must be a single expression")
-			}
-		}
-	}
-	if depth != 0 {
-		return fmt.Errorf("unbalanced parentheses")
-	}
-	if len(s) < 3 {
-		return fmt.Errorf("empty filter")
-	}
-	return nil
+// filterSyntax parses s with the RFC 4515 parser and default limits.
+func filterSyntax(s string) error {
+	_, err := ldapfilter.Parse(s)
+	return err
 }
 
-// basicDNSyntax is a structural stand-in for the RFC 4514 parser.
-func basicDNSyntax(s string) error {
-	if strings.TrimSpace(s) == "" {
-		return fmt.Errorf("empty DN")
-	}
-	for _, rdn := range splitUnescaped(s, ',') {
-		for _, ava := range splitUnescaped(rdn, '+') {
-			attr, _, ok := strings.Cut(ava, "=")
-			if !ok || strings.TrimSpace(attr) == "" {
-				return fmt.Errorf("%q is not attr=value", strings.TrimSpace(ava))
-			}
-		}
-	}
-	return nil
-}
-
-func splitUnescaped(s string, sep byte) []string {
-	var parts []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '\\':
-			i++
-		case sep:
-			parts = append(parts, s[start:i])
-			start = i + 1
-		}
-	}
-	return append(parts, s[start:])
+// dnSyntax parses s with the RFC 4514 parser.
+func dnSyntax(s string) error {
+	_, err := ldapfilter.ParseDN(s)
+	return err
 }
 
 // ---- sections -------------------------------------------------------------
