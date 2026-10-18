@@ -9,7 +9,7 @@ ALDAP is licensed under MIT. The following dependencies are distributed with the
 | github.com/davecgh/go-spew/spew | ISC | https://github.com/davecgh/go-spew/blob/v1.1.1/LICENSE |
 | github.com/fatih/color | MIT | https://github.com/fatih/color/blob/v1.17.0/LICENSE.md |
 | github.com/go-asn1-ber/asn1-ber | MIT | https://github.com/go-asn1-ber/asn1-ber/blob/v1.5.8/LICENSE |
-| github.com/go-ldap/ldap/v3 | MIT | https://github.com/go-ldap/ldap/blob/v3.4.14/LICENSE |
+| github.com/go-ldap/ldap/v3 | MIT | https://github.com/go-ldap/ldap/blob/v3.4.14/v3/LICENSE |
 | github.com/google/uuid | BSD-3-Clause | https://github.com/google/uuid/blob/v1.6.0/LICENSE |
 | github.com/hashicorp/go-hclog | MIT | https://github.com/hashicorp/go-hclog/blob/v1.6.3/LICENSE |
 | github.com/jimlambrt/gldap | MIT | https://github.com/jimlambrt/gldap/blob/v0.1.14/LICENSE |
@@ -19,5 +19,5 @@ ALDAP is licensed under MIT. The following dependencies are distributed with the
 | github.com/stretchr/testify | MIT | https://github.com/stretchr/testify/blob/v1.9.0/LICENSE |
 | golang.org/x/crypto/md4 | BSD-3-Clause | https://cs.opensource.google/go/x/crypto/+/v0.54.0:LICENSE |
 | golang.org/x/sys/unix | BSD-3-Clause | https://cs.opensource.google/go/x/sys/+/v0.47.0:LICENSE |
-| gopkg.in/yaml.v3 | MIT | Unknown |
+| gopkg.in/yaml.v3 | MIT | https://github.com/go-yaml/yaml/blob/v3.0.1/LICENSE |
 

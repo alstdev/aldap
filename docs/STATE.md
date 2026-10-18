@@ -5,7 +5,7 @@
 ## Stage 3 — Upstream, пул, failover (завершено 2026-10-18)
 - Зроблено: `internal/upstream` (`New/Start/Close`, `Search` з paging і failover, `UserBind` на bind-only пулі з `BindError{Reason, Data}`, `RootDSE`, `AuditServiceAccount`, `Check` для `--online`, `Status/Healthy`; стани `unknown/up/down` з порогами, події `upstream_down/up/insecure_config` через `EventSink`; `SerializeFilter` — абсолютні фільтри не йдуть в upstream). `internal/testdir` (gldap + TCP-проксі, LDIF-фікстура `testdata/ad.ldif`, paging, 803/804/1941, AD bind-коди, хуки `Calls/SetDelay/Kill/Restart`). `aldap check --online`. Опис — `docs/upstream.md`.
 - Покриття: `upstream` 92.5%, `testdir` 93.4%, `cmd/aldap` 91%. Інтеграційні (`-tags integration`): failover/повернення на primary, 2 сторінки paging, reason-мапінг, ldaps/StartTLS, аудит, `check --online`.
-- Залежності: `gldap` v0.1.14, `go-ldap/v3` v3.4.14 (v3.4.15 вимагає Go 1.26), `go-hclog` (MPL-2.0, через gldap).
+- Залежності: `gldap` v0.1.14, `go-ldap/v3` v3.4.14 (v3.4.15 вимагає Go 1.26), `go-hclog` (MIT, через gldap).
 - Рішення (DECISIONS): StartTLS-невдача = збій з'єднання без fallback; лише транспортні помилки рахуються проти сервера; bind-only пул без явного reset; referrals не follow; errcheck вимкнено для тестів/testdir.
 - Відкрите: `make licenses` локально лише з toolchain 1.25 у PATH; `govulncheck@latest` вимагає Go ≥ 1.26 (CI через GOTOOLCHAIN=auto); URL ліцензії `yaml.v3` у звіті не резолвився офлайн — звірити з CI.
 - Зупинився: після коміту `stage-3: upstream pool and failover` у гілці `claude/relaxed-maxwell-e19c85`, PR у main.
