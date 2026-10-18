@@ -26,4 +26,4 @@ Format: `YYYY-MM-DD | STATUS (OPEN/DECIDED) | topic | decision | rationale`
 | 2026-10-18 | DECIDED | `[[api.token]]` validation | Tokens are validated even when `api.enabled = false` | Catches misconfiguration before the API is switched on |
 | 2026-10-18 | OPEN | Filter and DN syntax in `check` | Structural checks until Stage 2 wires the RFC 4515/4514 parsers into `Validator.ParseFilter`/`ParseDN` | Parsers belong to `internal/ldapfilter` |
 | 2026-10-18 | OPEN | `aldap check --quick` as container HEALTHCHECK | Currently an offline config check; a liveness probe of the running process comes with `aldap run` (Stage 4) | Dockerfile/compose already reference `check --quick` |
-
+| 2026-10-18 | DECIDED | BuildKit attestations in `build.sh` | `--provenance/--sbom` only with `ATTEST=1`; CI `docker-plain` builds without them | Default docker driver rejects attestations ("Attestation is not supported for the docker driver"); syft already produces the CycloneDX SBOM |
