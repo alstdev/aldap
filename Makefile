@@ -14,8 +14,8 @@ PLATFORMS   := linux/amd64 linux/arm64 windows/amd64
 COVER_MIN   ?= 80
 
 GOLANGCI    := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-# govulncheck is pinned: v1.8.0+ requires Go 1.26 (docs/DECISIONS.md).
-GOVULN_VERSION ?= v1.7.0
+# govulncheck is pinned (docs/DECISIONS.md); v1.8.0+ requires Go >= 1.26.
+GOVULN_VERSION ?= v1.9.0
 GOVULN      := go run golang.org/x/vuln/cmd/govulncheck@$(GOVULN_VERSION)
 GOLICENSES  := go run github.com/google/go-licenses@latest
 GOTESTSUM   := go run gotest.tools/gotestsum@latest

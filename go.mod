@@ -1,8 +1,8 @@
 module github.com/alstdev/aldap
 
-go 1.25.0
+go 1.26.0
 
-toolchain go1.25.14
+toolchain go1.26.9
 
 require (
 	github.com/BurntSushi/toml v1.6.0

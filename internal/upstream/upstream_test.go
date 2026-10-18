@@ -936,8 +936,8 @@ func TestNoSecretsInOutput_Upstream(t *testing.T) {
 	}
 	collect(u.UserBind(ctx, "cn=user,dc=x", userSecret))
 	collect(u.UserBind(ctx, "cn=user,dc=x", "wrong-"+userSecret))
-	n.servers["ldap://a:389"].passwords["cn=svc,dc=x"] = "rotated"
 	n.servers["ldap://a:389"].mu.Lock()
+	n.servers["ldap://a:389"].passwords["cn=svc,dc=x"] = "rotated" // the audit goroutine reads under the same lock
 	n.servers["ldap://a:389"].binds = 0
 	n.servers["ldap://a:389"].mu.Unlock()
 	u.servers[0].svc.drain()
