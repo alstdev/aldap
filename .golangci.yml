@@ -62,6 +62,10 @@ linters:
     errcheck:
       check-type-assertions: true
       check-blank: true
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
   exclusions:
     rules:
       - path: _test\.go
@@ -80,7 +84,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - aldap
+        - github.com/alstdev/aldap
 
 issues:
   max-issues-per-linter: 0

@@ -1,0 +1,19 @@
+# Build and test output
+/dist/
+/artifacts/
+*.test
+*.out
+
+# Local runtime files (never commit)
+/aldap.toml
+/secrets/
+/tls/
+*.pem
+*.key
+!testdata/**/*.pem
+
+# Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store

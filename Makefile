@@ -1,13 +1,13 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-MODULE      ?= aldap
+MODULE      ?= github.com/alstdev/aldap
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE        ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS     := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 GOFLAGS     := -trimpath -buildvcs=false
-export CGO_ENABLED := 0
+# Binaries are static (CGO_ENABLED=0); tests need cgo for -race.
 
 DIST        := dist
 PLATFORMS   := linux/amd64 linux/arm64 windows/amd64
@@ -30,26 +30,26 @@ build: ## Build binaries for all platforms into dist/
 	@for p in $(PLATFORMS); do \
 	  os=$${p%/*}; arch=$${p#*/}; ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
 	  echo "building $$os/$$arch"; \
-	  GOOS=$$os GOARCH=$$arch go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldap_$${os}_$${arch}$$ext ./cmd/aldap || exit 1; \
-	  GOOS=$$os GOARCH=$$arch go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldapctl_$${os}_$${arch}$$ext ./cmd/aldapctl || exit 1; \
+	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldap_$${os}_$${arch}$$ext ./cmd/aldap || exit 1; \
+	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldapctl_$${os}_$${arch}$$ext ./cmd/aldapctl || exit 1; \
 	done
 
 .PHONY: build-local
 build-local: ## Build for current platform into dist/
 	@mkdir -p $(DIST)
-	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldap ./cmd/aldap
-	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldapctl ./cmd/aldapctl
+	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldap ./cmd/aldap
+	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldapctl ./cmd/aldapctl
 
 .PHONY: test
 test: ## Unit tests with race detector and coverage gate
 	@mkdir -p artifacts
-	$(GOTESTSUM) --junitfile artifacts/junit.xml -- -race -coverprofile=artifacts/coverage.out -covermode=atomic ./...
+	CGO_ENABLED=1 $(GOTESTSUM) --junitfile artifacts/junit.xml -- -race -coverprofile=artifacts/coverage.out -covermode=atomic ./...
 	@go tool cover -func=artifacts/coverage.out | tail -1 | awk -v min=$(COVER_MIN) '{gsub("%","",$$3); if ($$3+0 < min) {printf "coverage %s%% < %s%%\n",$$3,min; exit 1} else printf "coverage %s%%\n",$$3}'
 	@go tool cover -html=artifacts/coverage.out -o artifacts/coverage.html
 
 .PHONY: integration
 integration: ## Integration tests against in-memory LDAP and e2e clients
-	$(GOTESTSUM) -- -race -tags integration -timeout 20m ./...
+	CGO_ENABLED=1 $(GOTESTSUM) -- -race -tags integration -timeout 20m ./...
 
 .PHONY: integration-samba
 integration-samba: ## Integration tests against Samba AD DC in Docker
@@ -86,7 +86,7 @@ licenses: ## Check dependency licenses and regenerate THIRD_PARTY_LICENSES.md
 
 .PHONY: shellcheck
 shellcheck: ## shellcheck all scripts
-	shellcheck -x scripts/*.sh build.sh
+	shellcheck -x build.sh $(wildcard scripts/*.sh)
 
 .PHONY: ci
 ci: lint vet vuln licenses test integration shellcheck ## Everything except Samba

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./dist/**)",
+      "Read(./artifacts/**)",
+      "Read(./go.sum)",
+      "Read(./testdata/fuzz/**)",
+      "Read(./THIRD_PARTY_LICENSES.md)",
+      "Read(./secrets/**)"
+    ]
+  }
+}
