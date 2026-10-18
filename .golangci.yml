@@ -73,9 +73,11 @@ linters:
           - gosec
           - gocyclo
           - unparam
+          - errcheck
       - path: internal/testdir/
         linters:
           - gosec
+          - errcheck
 
 formatters:
   enable:
