@@ -16,12 +16,13 @@
 
 ## Stage 1 — Конфіг і секрети
 Читати: SPEC §3 (3.1–3.6, приклад 3.4 повністю); TESTING «Рівні».
-- [ ] `internal/config`: модель усіх секцій зі `SPEC.md §3`, `UnmarshalText` для duration, `include`, strict (невідомі ключі → помилка).
-- [ ] `internal/secret`: `X`/`X_file`/`X_env`, взаємовиключність, обрізання `\n`, перевірка прав файлу (warn).
-- [ ] Env-overlay `ALDAP_*` за схемою §3.3; мінімальний конфіг повністю з env.
-- [ ] `Validate()`: усі правила §3.5 (офлайн-частина). Повідомлення з шляхом до ключа (`profile.virola.attrs.allow: '*' is not allowed`).
-- [ ] `aldap check` (офлайн), `--json` вивід.
-- [ ] `docs/config.md` генерується/перевіряється тестом `TestConfigDocsInSync`.
+- [x] `internal/config`: модель усіх секцій зі `SPEC.md §3`, `UnmarshalText` для duration, `include`, strict (невідомі ключі → помилка).
+- [x] `internal/secret`: `X`/`X_file`/`X_env`, взаємовиключність, обрізання `\n`, перевірка прав файлу (warn).
+- [x] Env-overlay `ALDAP_*` за схемою §3.3; мінімальний конфіг повністю з env.
+- [x] `Validate()`: усі правила §3.5 (офлайн-частина). Повідомлення з шляхом до ключа (`profile.virola.attrs.allow: '*' is not allowed`).
+- [x] `aldap check` (офлайн), `--json` вивід.
+- [x] `docs/config.md` генерується/перевіряється тестом `TestConfigDocsInSync`.
+- OPEN: перевірка синтаксису фільтрів/DN поки структурна (дужки, `attr=value`); парсери RFC 4515/4514 підключаються у Stage 2 через `Validator.ParseFilter/ParseDN`.
 **КП:** unit-покриття `config` ≥ 85%; `aldap check` на `aldap.toml.example` — 0 помилок; тести на кожне правило валідації; тест «секрет у двох джерелах → помилка».
 
 ## Stage 2 — Парсер фільтрів і DN

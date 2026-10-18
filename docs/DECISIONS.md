@@ -17,3 +17,13 @@ Format: `YYYY-MM-DD | STATUS (OPEN/DECIDED) | topic | decision | rationale`
 | 2026-10-18 | DECIDED | Licence report | Own module filtered out in `scripts/licenses.tpl` | `go-licenses report` lists the root module itself |
 | 2026-10-18 | OPEN | Local `make vuln` | Blocked in the agent environment (proxy denies `vuln.go.dev`); runs in CI | Re-check when environment network policy changes |
 | 2026-10-18 | OPEN | Local Docker build | Blocked in the agent environment (no Docker daemon); `docker-plain` job runs in CI | Verify `--target plain` on the first CI run |
+| 2026-10-18 | DECIDED | Offline `aldap check` and missing files | Unreadable secret or certificate file is a warning offline, an error with `Validator.StrictFiles` (used by `run`/`--online`) | KP of Stage 1 requires 0 errors on `aldap.toml.example`, whose `/run/secrets/*` exist only at run time |
+| 2026-10-18 | DECIDED | Env overlay of secrets | Setting any form (`X`, `X_file`, `X_env`) from `ALDAP_*` clears the other two forms | SPEC §3.1: environment outranks files and TOML |
+| 2026-10-18 | DECIDED | Table names from env | Existing names match case-insensitively with `-`→`_`; a new table created from env is named lower case with `_`→`-` | SPEC §3.3 example maps `ad-main` to `AD_MAIN`; names with `_`, `.` or upper case get a warning |
+| 2026-10-18 | DECIDED | Env coverage | Free-form tables (`attrs.map`, `computed`, `mask`, `groups`, `headers`) and arrays of tables (`[[events.webhook]]`, `[[notify.channel]]`, `[[api.token]]`) are not settable from env; unknown `ALDAP_*` is an error (except `ALDAP_CONFIG`, `ALDAP_TEST_*`) | SPEC §3.3 defines only section/name/key addressing; prohibition 7 |
+| 2026-10-18 | DECIDED | `profile.transport` default | Always `ldaps`, regardless of port | Secure default; SPEC says "ldaps (default for 636)" without a rule for other ports |
+| 2026-10-18 | DECIDED | `mode = honeypot` | `upstream`, `bases` and `attrs.allow` are optional | A honeypot never queries the upstream |
+| 2026-10-18 | DECIDED | `[[api.token]]` validation | Tokens are validated even when `api.enabled = false` | Catches misconfiguration before the API is switched on |
+| 2026-10-18 | OPEN | Filter and DN syntax in `check` | Structural checks until Stage 2 wires the RFC 4515/4514 parsers into `Validator.ParseFilter`/`ParseDN` | Parsers belong to `internal/ldapfilter` |
+| 2026-10-18 | OPEN | `aldap check --quick` as container HEALTHCHECK | Currently an offline config check; a liveness probe of the running process comes with `aldap run` (Stage 4) | Dockerfile/compose already reference `check --quick` |
+

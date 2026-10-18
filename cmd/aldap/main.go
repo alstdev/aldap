@@ -19,6 +19,7 @@ var (
 const usageText = `Usage: aldap <command> [options]
 
 Commands:
+  check     validate the configuration (see: aldap check -h)
   version   print build information
   help      print this help
 `
@@ -34,6 +35,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case "check":
+		return runCheck(args[1:], stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, versionLine())
 		return 0
