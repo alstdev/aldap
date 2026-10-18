@@ -2,15 +2,22 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 
 	"github.com/alstdev/aldap/internal/config"
 )
 
-// checkResult is the JSON shape of `aldap check --json`.
+// envOnlySource is printed instead of a path when no configuration file was
+// read and everything came from ALDAP_* environment variables.
+const envOnlySource = "(environment only)"
+
+// checkResult is the JSON shape of `aldap check --json`. Config is "" when the
+// configuration came from the environment only.
 type checkResult struct {
 	OK       bool           `json:"ok"`
 	Config   string         `json:"config"`
@@ -50,6 +57,9 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		res.Errors = append(res.Errors, config.Issue{Path: "config", Msg: err.Error()})
 	} else {
+		if !required && !fileExists(path) {
+			res.Config = ""
+		}
 		rep := config.Validator{}.Validate(cfg)
 		res.Errors, res.Warnings = rep.Errors, rep.Warnings
 	}
@@ -81,5 +91,16 @@ func printReport(w io.Writer, res checkResult) {
 	if !res.OK {
 		status = "FAILED"
 	}
-	fmt.Fprintf(w, "%s: %s, %d errors, %d warnings\n", status, res.Config, len(res.Errors), len(res.Warnings))
+	source := res.Config
+	if source == "" {
+		source = envOnlySource
+	}
+	fmt.Fprintf(w, "%s: %s, %d errors, %d warnings\n", status, source, len(res.Errors), len(res.Warnings))
+}
+
+// fileExists reports whether path names an existing file; any error other
+// than "not exist" is treated as existing so that LoadFile's error wins.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return !errors.Is(err, fs.ErrNotExist)
 }
