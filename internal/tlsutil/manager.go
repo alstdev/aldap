@@ -285,7 +285,7 @@ func certData(leaf *x509.Certificate, now time.Time) map[string]any {
 
 // ChainPEM renders the certificate chain of c as PEM.
 func ChainPEM(c tls.Certificate) []byte {
-	var out []byte
+	out := make([]byte, 0, 4096)
 	for _, der := range c.Certificate {
 		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})...)
 	}

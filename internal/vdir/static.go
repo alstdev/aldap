@@ -114,8 +114,8 @@ func substringMatch(v string, f *ldapfilter.Filter) bool {
 		}
 		v = v[len(ini):]
 	}
-	for _, any := range f.Any {
-		a := strings.ToLower(any)
+	for _, mid := range f.Any {
+		a := strings.ToLower(mid)
 		i := strings.Index(v, a)
 		if i < 0 {
 			return false

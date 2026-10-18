@@ -94,7 +94,8 @@ func (h *PasswordHash) Verify(password []byte) bool {
 // Params returns the cost parameters.
 func (h *PasswordHash) Params() Argon2Params { return h.p }
 
-// parseArgon2Params parses "m=65536,t=3,p=4".
+// parseArgon2Params parses "m=65536,t=3,p=4". Values are scanned straight
+// into their target widths, so an out-of-range value is a scan error.
 func parseArgon2Params(s string) (Argon2Params, error) {
 	var p Argon2Params
 	for _, kv := range strings.Split(s, ",") {
@@ -102,21 +103,19 @@ func parseArgon2Params(s string) (Argon2Params, error) {
 		if !ok {
 			return p, fmt.Errorf("%w: parameter %q", ErrBadHash, kv)
 		}
-		var n uint64
-		if _, err := fmt.Sscanf(v, "%d", &n); err != nil || n == 0 {
-			return p, fmt.Errorf("%w: parameter %q", ErrBadHash, kv)
-		}
-		switch {
-		case k == "m" && n <= 1<<32-1:
-			p.Memory = uint32(n) //nolint:gosec // range checked in the case guard
-		case k == "t" && n <= 1<<32-1:
-			p.Time = uint32(n) //nolint:gosec // range checked in the case guard
-		case k == "p" && n <= 255:
-			p.Threads = uint8(n) //nolint:gosec // range checked in the case guard
-		case k == "m" || k == "t" || k == "p":
-			return p, fmt.Errorf("%w: parameter %q too large", ErrBadHash, k)
+		var err error
+		switch k {
+		case "m":
+			_, err = fmt.Sscanf(v, "%d", &p.Memory)
+		case "t":
+			_, err = fmt.Sscanf(v, "%d", &p.Time)
+		case "p":
+			_, err = fmt.Sscanf(v, "%d", &p.Threads)
 		default:
 			return p, fmt.Errorf("%w: unknown parameter %q", ErrBadHash, k)
+		}
+		if err != nil || strings.HasPrefix(v, "-") || strings.HasPrefix(v, "+") {
+			return p, fmt.Errorf("%w: parameter %q", ErrBadHash, kv)
 		}
 	}
 	if p.Memory == 0 || p.Time == 0 || p.Threads == 0 {
