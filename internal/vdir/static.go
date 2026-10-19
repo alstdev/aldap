@@ -1,8 +1,9 @@
 // Package vdir is the virtual directory: it answers Bind and Search for one
 // profile by rewriting client requests into upstream searches and upstream
-// results into the virtual tree of SPEC §4.1 (Stage 4: root DSE, minimal
-// subschema, container entries, users under ou=users; virtual groups,
-// computed and masked attributes follow in Stage 5).
+// results into the virtual tree of SPEC §4.1: root DSE, minimal subschema,
+// container entries, users under ou=users (allowlist, renames, computed and
+// masked attributes, object class mapping), virtual groups under ou=groups
+// with member/memberOf, honeytokens, honeypot and mock modes.
 package vdir
 
 import (
@@ -39,6 +40,21 @@ func (e *entry) add(name string, values ...string) {
 	e.attrs = append(e.attrs, listener.Attribute{Name: name, Values: values})
 }
 
+// set replaces the values of an attribute (removing it when none are given).
+func (e *entry) set(name string, values ...string) {
+	for i := range e.attrs {
+		if strings.EqualFold(e.attrs[i].Name, name) {
+			if len(values) == 0 {
+				e.attrs = append(e.attrs[:i], e.attrs[i+1:]...)
+				return
+			}
+			e.attrs[i].Values = append([]string(nil), values...)
+			return
+		}
+	}
+	e.add(name, values...)
+}
+
 func (e *entry) get(name string) []string {
 	for _, a := range e.attrs {
 		if strings.EqualFold(a.Name, name) {
@@ -59,73 +75,6 @@ func (e *entry) project(want map[string]bool, all bool) listener.Entry {
 		}
 	}
 	return out
-}
-
-// matches evaluates a filter against a static entry: case-insensitive
-// equality and substring, presence, and/or/not; anything else (ordering,
-// approx, extensible) does not match. Good enough for the handful of
-// container and schema entries ALDAP serves itself.
-func (e *entry) matches(f *ldapfilter.Filter) bool {
-	if f == nil {
-		return true
-	}
-	switch f.Kind {
-	case ldapfilter.And:
-		for _, c := range f.Children {
-			if !e.matches(c) {
-				return false
-			}
-		}
-		return true
-	case ldapfilter.Or:
-		for _, c := range f.Children {
-			if e.matches(c) {
-				return true
-			}
-		}
-		return false
-	case ldapfilter.Not:
-		return len(f.Children) == 1 && !e.matches(f.Children[0])
-	case ldapfilter.Present:
-		return len(e.get(f.Attr)) > 0
-	case ldapfilter.Equality:
-		for _, v := range e.get(f.Attr) {
-			if strings.EqualFold(v, f.Value) {
-				return true
-			}
-		}
-		return false
-	case ldapfilter.Substring:
-		for _, v := range e.get(f.Attr) {
-			if substringMatch(strings.ToLower(v), f) {
-				return true
-			}
-		}
-		return false
-	default:
-		return false
-	}
-}
-
-func substringMatch(v string, f *ldapfilter.Filter) bool {
-	if ini := strings.ToLower(f.Initial); ini != "" {
-		if !strings.HasPrefix(v, ini) {
-			return false
-		}
-		v = v[len(ini):]
-	}
-	for _, mid := range f.Any {
-		a := strings.ToLower(mid)
-		i := strings.Index(v, a)
-		if i < 0 {
-			return false
-		}
-		v = v[i+len(a):]
-	}
-	if fin := strings.ToLower(f.Final); fin != "" {
-		return strings.HasSuffix(v, fin)
-	}
-	return true
 }
 
 // containerEntry builds the entry of the virtual base or one of its OUs.

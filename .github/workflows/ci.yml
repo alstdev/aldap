@@ -37,6 +37,7 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version-file: go.mod, cache: true }
       - run: sudo apt-get update && sudo apt-get install -y ldap-utils
+      - run: python3 -m pip install --user ldap3   # TESTING.md 48 (TestDaemon_Ldap3 skips without it)
       - run: make test
       - run: make integration
       - run: go test -run TestNoSecretsInOutput -tags integration ./...
@@ -80,12 +81,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      # The Samba AD test bench arrives with Stage 13; until deploy/samba-dc/compose.yml
+      # exists the remaining steps are skipped (hashFiles is a step-level function).
+      - id: bench
+        run: echo "present=${{ hashFiles('deploy/samba-dc/compose.yml') != '' }}" >> "$GITHUB_OUTPUT"
+      - if: steps.bench.outputs.present == 'true'
+        uses: actions/setup-go@v5
         with: { go-version-file: go.mod, cache: true }
-      - run: make integration-samba
-      - uses: actions/upload-artifact@v4
-        if: always()
+      - if: steps.bench.outputs.present == 'true'
+        run: make integration-samba
+      - if: steps.bench.outputs.present == 'true' && always()
+        uses: actions/upload-artifact@v4
         with: { name: samba-logs, path: artifacts/ }
+      - if: steps.bench.outputs.present != 'true'
+        run: echo "::warning::deploy/samba-dc/compose.yml not found, Samba integration skipped (Stage 13)"
 
   docker-dhi:
     if: github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')

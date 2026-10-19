@@ -1,9 +1,10 @@
 # internal/listener, profile, vdir, tlsutil — client side (Stage 4)
 
 Implements SPEC §3.4 `[server]`/`[tls]`/`[profile.<name>]`, §4.2 (Search),
-§4.3 (Bind), §9 (transport limits) and §12 (client compatibility) for
-`mode = proxy`. Virtual groups, computed/masked attributes, honeytokens,
-rate limiting and IDS follow in later stages.
+§4.3 (Bind), §9 (transport limits) and §12 (client compatibility). Virtual
+groups, computed/masked attributes, honeytokens and the honeypot/mock
+modes are in `docs/vdir.md` (Stage 5); rate limiting and IDS follow in
+Stage 6.
 
 ## Packages
 
@@ -100,7 +101,8 @@ Static entries served by ALDAP: root DSE (`namingContexts`,
 results, `supportedExtension` = StartTLS when offered, `vendorName=ALDAP`,
 `vendorVersion`), `cn=Subschema` (attribute types with well-known OIDs for
 the allowed attributes, object classes of the virtual tree) and the three
-containers. `ou=groups` is empty until Stage 5.
+containers. Virtual groups, computed/masked attributes, honeytokens and
+the honeypot/mock modes are described in `docs/vdir.md` (Stage 5).
 
 ## Bind (SPEC §4.3)
 
@@ -145,7 +147,8 @@ stop within `shutdown_timeout`, `shutdown` event. `SIGHUP`: the new
 configuration is loaded and validated; on failure the running one stays and
 `config_reload{ok=false}` is emitted; on success the old listeners are
 drained and the new ones started (`config_reload{ok=true}`). Profiles with
-`mode = honeypot|mock` are logged and skipped in this build.
+`mode = honeypot` run without an upstream and `mode = mock` over
+`mock.file` (`docs/vdir.md`).
 
 ## Tests
 

@@ -16,6 +16,8 @@ const (
 	BindOK         = "bind_ok"
 	BindFail       = "bind_fail"
 	BindBlocked    = "bind_blocked"
+	Lock           = "lock"
+	Honeytoken     = "honeytoken"
 	Search         = "search"
 	OpDenied       = "op_denied"
 	RateLimited    = "rate_limited"

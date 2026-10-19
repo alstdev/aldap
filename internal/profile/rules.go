@@ -7,7 +7,9 @@ package profile
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/alstdev/aldap/internal/config"
 	"github.com/alstdev/aldap/internal/ldapfilter"
@@ -45,11 +47,29 @@ type Rules struct {
 	// ClientBindDN is the service login of the application (nil = none).
 	ClientBindDN *ldapfilter.DN
 	clientHash   *PasswordHash
+	// Mode is proxy, honeypot or mock.
+	Mode string
+	// NestedGroups enables transitive membership; NestedDepth bounds the
+	// recursion on generic upstreams.
+	NestedGroups bool
+	NestedDepth  int
+	// MembershipTTL is how long computed group membership is reused.
+	MembershipTTL time.Duration
+	// HoneytokenInGroups lists honeytokens as members of virtual groups.
+	HoneytokenInGroups bool
 
-	allow   map[string]string // lower client name → canonical client name
-	toUp    map[string]string // lower client name → upstream name (attrs.map)
-	fromUp  map[string][]string
-	allowed []string
+	allow       map[string]string // lower client name → canonical client name
+	toUp        map[string]string // lower client name → upstream name (attrs.map)
+	fromUp      map[string][]string
+	allowed     []string
+	computed    []*Computed
+	byName      map[string]*Computed // lower client name → computed
+	masks       []*Mask
+	ocMap       map[string]string // lower upstream class → client class
+	ocBack      map[string]string // lower client class → upstream class
+	groups      []*Group
+	groupByName map[string]*Group
+	honeytokens []*Honeytoken
 }
 
 // Options tune Compile.
@@ -66,15 +86,27 @@ func Compile(name string, p *config.Profile, u *config.Upstream, o Options) (*Ru
 		return nil, errors.New("profile: nil config")
 	}
 	r := &Rules{Name: name, Bases: append([]string(nil), p.Bases...), RDNAttr: p.RDNAttr, Limits: p.Limits,
-		UserBind: p.UserBind, AnonymousBind: p.AnonymousBind, allow: map[string]string{}, toUp: map[string]string{}, fromUp: map[string][]string{}}
+		UserBind: p.UserBind, AnonymousBind: p.AnonymousBind, Mode: p.Mode, NestedGroups: p.NestedGroups, NestedDepth: p.NestedDepth,
+		MembershipTTL: p.Cache.TTL.D(), HoneytokenInGroups: p.HoneytokenInGroups,
+		allow: map[string]string{}, toUp: map[string]string{}, fromUp: map[string][]string{}, byName: map[string]*Computed{},
+		ocMap: map[string]string{}, ocBack: map[string]string{}, groupByName: map[string]*Group{}}
 	if u != nil {
 		r.Kind = u.Kind
 	}
 	if r.Kind == "" {
 		r.Kind = "ad"
 	}
+	if r.Mode == "" {
+		r.Mode = "proxy"
+	}
 	if r.RDNAttr == "" {
 		r.RDNAttr = "cn"
+	}
+	if r.NestedDepth <= 0 {
+		r.NestedDepth = 10
+	}
+	if r.MembershipTTL <= 0 {
+		r.MembershipTTL = time.Minute
 	}
 	var err error
 	if r.VirtualBase, err = ldapfilter.ParseDN(p.VirtualBase); err != nil {
@@ -101,7 +133,99 @@ func Compile(name string, p *config.Profile, u *config.Upstream, o Options) (*Ru
 	if err := r.compileClientBind(name, p.ClientBind, o); err != nil {
 		return nil, err
 	}
+	if err := r.compileTransforms(name, p); err != nil {
+		return nil, err
+	}
+	if err := r.compileGroups(name, p); err != nil {
+		return nil, err
+	}
+	if err := r.compileHoneytokens(name, p); err != nil {
+		return nil, err
+	}
 	return r, nil
+}
+
+// compileTransforms parses attrs.computed, attrs.mask and objectclass.map.
+func (r *Rules) compileTransforms(name string, p *config.Profile) error {
+	for _, k := range sortedKeys(p.Attrs.Computed) {
+		c, err := CompileComputed(k, p.Attrs.Computed[k])
+		if err != nil {
+			return fmt.Errorf("profile %s: attrs.computed.%s: %w", name, k, err)
+		}
+		r.computed = append(r.computed, c)
+		r.byName[strings.ToLower(k)] = c
+	}
+	for _, k := range sortedKeys(p.Attrs.Mask) {
+		m, err := CompileMask(k, p.Attrs.Mask[k])
+		if err != nil {
+			return fmt.Errorf("profile %s: attrs.mask.%s: %w", name, k, err)
+		}
+		r.masks = append(r.masks, m)
+	}
+	for up, client := range p.ObjectClass.Map {
+		if up == "" || client == "" {
+			return fmt.Errorf("profile %s: objectclass.map: empty class name", name)
+		}
+		r.ocMap[strings.ToLower(up)] = client
+		r.ocBack[strings.ToLower(client)] = up
+	}
+	return nil
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// Computed returns the computed attributes in name order.
+func (r *Rules) Computed() []*Computed { return r.computed }
+
+// IsComputed reports whether a client attribute is computed.
+func (r *Rules) IsComputed(client string) bool {
+	_, ok := r.byName[strings.ToLower(client)]
+	return ok
+}
+
+// Masks returns the mask rules in name order.
+func (r *Rules) Masks() []*Mask { return r.masks }
+
+// MapObjectClass rewrites upstream object class values for clients
+// (objectclass.map); unmapped values pass through.
+func (r *Rules) MapObjectClass(values []string) []string {
+	if len(r.ocMap) == 0 {
+		return values
+	}
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if c, ok := r.ocMap[strings.ToLower(v)]; ok {
+			v = c
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// UpstreamObjectClass maps a client object class back to the upstream one.
+func (r *Rules) UpstreamObjectClass(client string) string {
+	if up, ok := r.ocBack[strings.ToLower(client)]; ok {
+		return up
+	}
+	return client
+}
+
+// IsVirtualAttr reports whether a client attribute is produced by ALDAP
+// itself rather than fetched: computed attributes and memberOf, which
+// always names virtual groups (never the upstream's groups).
+func (r *Rules) IsVirtualAttr(client string) bool {
+	l := strings.ToLower(client)
+	if _, ok := r.byName[l]; ok {
+		return true
+	}
+	return l == strings.ToLower(AttrMemberOf)
 }
 
 // compileAttrs builds the allow and rename tables.
@@ -180,10 +304,14 @@ func (r *Rules) VerifyClientPassword(password []byte) bool {
 // configuration order (attrs.allow followed by attrs.map keys).
 func (r *Rules) AllowedAttrs() []string { return append([]string(nil), r.allowed...) }
 
-// IsAllowed reports whether a client attribute name may be returned.
+// IsAllowed reports whether a client attribute name may be returned:
+// attrs.allow, attrs.map keys, computed attributes and memberOf when the
+// profile has virtual groups.
 func (r *Rules) IsAllowed(client string) bool {
-	_, ok := r.allow[strings.ToLower(client)]
-	return ok
+	if _, ok := r.allow[strings.ToLower(client)]; ok {
+		return true
+	}
+	return r.IsVirtualAttr(client)
 }
 
 // UpstreamAttr maps a client attribute name to its upstream name (attrs.map);
@@ -210,11 +338,19 @@ func (r *Rules) AttrMap() map[string]string {
 	return out
 }
 
-// Classify says where a filter term on attr can be evaluated: allowed or
-// mapped attributes (and objectClass, which every client uses) go upstream;
-// everything else is denied and becomes absolute false (SPEC §4.2 step 3).
+// Classify says where a filter term on attr can be evaluated: computed
+// attributes and memberOf of virtual groups are evaluated locally; allowed
+// or mapped attributes (and objectClass, which every client uses) go
+// upstream; everything else is denied and becomes absolute false (SPEC §4.2
+// step 3).
 func (r *Rules) Classify(attr string) ldapfilter.Class {
 	l := strings.ToLower(attr)
+	if i := strings.IndexByte(l, ';'); i > 0 {
+		l = l[:i]
+	}
+	if r.IsVirtualAttr(l) {
+		return ldapfilter.Local
+	}
 	if l == "objectclass" {
 		return ldapfilter.Upstream
 	}

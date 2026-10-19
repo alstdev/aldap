@@ -225,10 +225,11 @@ func TestSearch_Users(t *testing.T) {
 		t.Fatalf("alice missing: %v", dns(es))
 	}
 	if attr(alice, "uid")[0] != "alice.adams" || attr(alice, "cn")[0] != "Alice Adams" || attr(alice, "sAMAccountName")[0] != "alice.adams" ||
-		attr(alice, "mail")[0] != "alice.adams@test.aldap" || len(attr(alice, "objectGUID")) != 1 || len(attr(alice, "memberOf")) != 2 {
+		attr(alice, "mail")[0] != "alice.adams@test.aldap" || len(attr(alice, "objectGUID")) != 1 || attr(alice, "memberOf") != nil {
 		t.Errorf("alice = %+v", alice.Attrs)
 	}
-	for _, forbidden := range []string{"telephoneNumber", "userPassword", "department", "title", "distinguishedName", "userAccountControl"} {
+	// memberOf never shows the upstream's groups: without virtual groups it is absent.
+	for _, forbidden := range []string{"telephoneNumber", "userPassword", "department", "title", "distinguishedName", "userAccountControl", "memberOf"} {
 		if attr(alice, forbidden) != nil {
 			t.Errorf("%s leaked", forbidden)
 		}

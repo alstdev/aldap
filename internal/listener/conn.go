@@ -59,6 +59,13 @@ type Conn struct {
 	cancel context.CancelFunc
 }
 
+// NewConn builds a detached connection record (no socket) for handlers
+// that are driven outside the listener: `aldap check --as-client`, the
+// profile test API and handler tests. Writes through it are not possible.
+func NewConn(id, profile string, remote net.Addr) *Conn {
+	return &Conn{id: id, profile: profile, remote: remote, opened: time.Now()}
+}
+
 // ID returns the connection id used in events ("c-00000001").
 func (c *Conn) ID() string { return c.id }
 
