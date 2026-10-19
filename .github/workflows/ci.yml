@@ -76,7 +76,8 @@ jobs:
           go test -run=^$ -fuzz=FuzzParseMessage -fuzztime=10m ./internal/listener/
 
   samba:
-    if: github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
+    # The Samba AD test bench arrives with Stage 13; until deploy/samba-dc/compose.yml exists the job is skipped.
+    if: (github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')) && hashFiles('deploy/samba-dc/compose.yml') != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

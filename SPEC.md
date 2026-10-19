@@ -78,7 +78,7 @@
 | `cmd/aldapctl` | TUI (Bubble Tea) + CLI. Працює лише через API ALDAP (unix socket / TCP). |
 | `internal/config` | Модель TOML, завантаження, злиття env/secret-files, валідація, hot-reload, `include`. |
 | `internal/secret` | Резолвер значень `*_file`, `*_env`, inline. |
-| `internal/listener` | Приймає з'єднання (gldap), TLS/StartTLS, ліміти з'єднань, маршрутизація до профілю. |
+| `internal/listener` | Приймає з'єднання (власний LDAP-фронтенд на `go-asn1-ber` з кодеками фільтрів/контролів `go-ldap`; gldap не використовується), TLS/StartTLS, ліміти з'єднань, маршрутизація до профілю. |
 | `internal/profile` | Правила профілю: допустимі bases, обов'язковий фільтр, allowlist атрибутів, мапінги. |
 | `internal/vdir` | Віртуальний каталог: переписування DN/фільтрів, злиття результатів, віртуальні групи, nested groups, computed/masked attrs, honeytokens. |
 | `internal/ldapfilter` | Парсер/серіалізатор фільтрів RFC 4515 з AST, переписування атрибутів, AND-ін'єкція, перевірка допустимості. |
@@ -92,15 +92,15 @@
 | `internal/tlsutil` | Вбудований CA, випуск/перевипуск серверного сертифіката, імпорт зовнішнього, перевірка строку. |
 | `internal/record` | Запис/відтворення запитів (record/replay), shadow-режим правил. |
 | `internal/metrics` | Prometheus-лічильники/гістограми. |
-| `internal/testdir` | In-memory LDAP для тестів (на базі `gldap/testdirectory`) з AD-подібною схемою. |
+| `internal/testdir` | In-memory LDAP для тестів (на базі `gldap`; єдине місце, де gldap використовується) з AD-подібною схемою. |
 
 ### 2.2 Залежності та ліцензії
 
 | Модуль | Призначення | Ліцензія |
 |---|---|---|
-| `github.com/jimlambrt/gldap` | LDAP-сервер (listener, mux, BER) | MIT |
-| `github.com/go-ldap/ldap/v3` | LDAP-клієнт до upstream | MIT (транзитивно BSD-3: x/crypto, sspi) |
-| `github.com/go-asn1-ber/asn1-ber` | BER | MIT |
+| `github.com/jimlambrt/gldap` | LDAP-сервер **лише** для `internal/testdir` (тестовий каталог); не для `internal/listener` | MIT |
+| `github.com/go-ldap/ldap/v3` | LDAP-клієнт до upstream; кодеки фільтрів (`DecompileFilter`) і контролів для `internal/listener` | MIT (транзитивно BSD-3: x/crypto, sspi) |
+| `github.com/go-asn1-ber/asn1-ber` | BER; основа власного LDAP-фронтенда `internal/listener` | MIT |
 | `github.com/BurntSushi/toml` | TOML | MIT |
 | `github.com/charmbracelet/bubbletea`, `bubbles`, `lipgloss` | TUI | MIT |
 | `github.com/kardianos/service` | Служба Windows/systemd/launchd | zlib |
