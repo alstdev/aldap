@@ -18,7 +18,14 @@ GOLANGCI    := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@lat
 GOVULN_VERSION ?= v1.9.0
 GOVULN      := go run golang.org/x/vuln/cmd/govulncheck@$(GOVULN_VERSION)
 GOLICENSES  := go run github.com/google/go-licenses@latest
-GOTESTSUM   := go run gotest.tools/gotestsum@latest
+# gotestsum is pinned (docs/DECISIONS.md). On GitHub Actions the output is
+# grouped per test and failed tests are annotated (scripts/ci-annotate.sh).
+GOTESTSUM_VERSION ?= v1.13.0
+GOTESTSUM   := go run gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
+GOTESTSUM_FLAGS ?=
+ifdef GITHUB_ACTIONS
+GOTESTSUM_FLAGS += --format github-actions --post-run-command scripts/ci-annotate.sh
+endif
 
 ALLOWED_LICENSES := MIT,BSD-2-Clause,BSD-3-Clause,ISC,Apache-2.0,Zlib,MPL-2.0,Unlicense
 
@@ -45,13 +52,14 @@ build-local: ## Build for current platform into dist/
 .PHONY: test
 test: ## Unit tests with race detector and coverage gate
 	@mkdir -p artifacts
-	CGO_ENABLED=1 $(GOTESTSUM) --junitfile artifacts/junit.xml -- -race -coverprofile=artifacts/coverage.out -covermode=atomic ./...
+	CGO_ENABLED=1 $(GOTESTSUM) $(GOTESTSUM_FLAGS) --junitfile artifacts/junit.xml --jsonfile artifacts/test.json -- -race -coverprofile=artifacts/coverage.out -covermode=atomic ./...
 	@go tool cover -func=artifacts/coverage.out | tail -1 | awk -v min=$(COVER_MIN) '{gsub("%","",$$3); if ($$3+0 < min) {printf "coverage %s%% < %s%%\n",$$3,min; exit 1} else printf "coverage %s%%\n",$$3}'
 	@go tool cover -html=artifacts/coverage.out -o artifacts/coverage.html
 
 .PHONY: integration
 integration: ## Integration tests against in-memory LDAP and e2e clients
-	CGO_ENABLED=1 $(GOTESTSUM) -- -race -tags integration -timeout 20m ./...
+	@mkdir -p artifacts
+	CGO_ENABLED=1 $(GOTESTSUM) $(GOTESTSUM_FLAGS) --junitfile artifacts/junit-integration.xml --jsonfile artifacts/integration.json -- -race -tags integration -timeout 20m ./...
 
 .PHONY: integration-samba
 integration-samba: ## Integration tests against Samba AD DC in Docker
@@ -60,7 +68,7 @@ integration-samba: ## Integration tests against Samba AD DC in Docker
 	ALDAP_TEST_SAMBA_BIND_DN="CN=Administrator,CN=Users,DC=test,DC=aldap" \
 	ALDAP_TEST_SAMBA_BIND_PASSWORD_FILE=deploy/samba-dc/secrets/admin_pass \
 	ALDAP_TEST_SAMBA_CA=testdata/samba-ca.pem \
-	$(GOTESTSUM) -- -tags integration_samba -timeout 30m ./... ; rc=$$?; \
+	$(GOTESTSUM) $(GOTESTSUM_FLAGS) --jsonfile artifacts/samba.json -- -tags integration_samba -timeout 30m ./... ; rc=$$?; \
 	docker compose -f deploy/samba-dc/compose.yml logs > artifacts/samba.log 2>&1 || true; \
 	docker compose -f deploy/samba-dc/compose.yml down -v; exit $$rc
 

@@ -615,7 +615,9 @@ func TestProtocol_Edges(t *testing.T) {
 }
 
 func TestTimeouts(t *testing.T) {
-	ts := start(t, Config{Profile: "p", FirstPacketTimeout: 150 * time.Millisecond, IdleTimeout: 300 * time.Millisecond})
+	// The idle timeout leaves a wide margin over the pause below: under -race on
+	// a loaded CI runner a sleep can overshoot by hundreds of milliseconds.
+	ts := start(t, Config{Profile: "p", FirstPacketTimeout: 150 * time.Millisecond, IdleTimeout: 1500 * time.Millisecond})
 	t.Run("first-packet", func(t *testing.T) {
 		_, rd := rawConn(t, ts.addr)
 		startT := time.Now()
@@ -630,7 +632,7 @@ func TestTimeouts(t *testing.T) {
 		if m := readRaw(t, rd); resultCode(t, m) != 0 {
 			t.Fatalf("bind → %d", resultCode(t, m))
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond) // well inside the idle timeout
 		_, _ = raw.Write(bindPacket(2, 3, "ok", "pw"))
 		if m := readRaw(t, rd); m.ID != 2 {
 			t.Fatalf("second bind within idle timeout → id %d", m.ID)
@@ -718,7 +720,12 @@ func TestShutdown_Graceful(t *testing.T) {
 	op.AppendChild(filter)
 	op.AppendChild(ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "attrs"))
 	_, _ = busy.Write(envelope(7, op, nil).Bytes())
-	time.Sleep(100 * time.Millisecond)
+	// Wait until the search is inside the handler (blocked on h.block).
+	waitFor(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.searches) == 1
+	})
 	if ts.ConnCount() != 2 {
 		t.Fatalf("conns = %d", ts.ConnCount())
 	}
@@ -755,13 +762,17 @@ func TestShutdown_Graceful(t *testing.T) {
 func TestShutdown_WaitsForDrain(t *testing.T) {
 	ts := start(t, Config{Profile: "p"})
 	c := ts.dial(t)
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		_ = c.Close()
-	}()
+	waitFor(t, func() bool { return ts.ConnCount() == 1 })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := ts.Shutdown(ctx); err != nil {
+	res := make(chan error, 1)
+	go func() { res <- ts.Shutdown(ctx) }()
+	// Serve returns once Shutdown has closed the listener: the drain is on.
+	if err := <-ts.done; !errors.Is(err, ErrServerClosed) {
+		t.Fatalf("Serve returned %v", err)
+	}
+	_ = c.Close()
+	if err := <-res; err != nil {
 		t.Errorf("Shutdown after client unbind = %v", err)
 	}
 }
