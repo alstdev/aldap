@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -68,6 +69,12 @@ func freePort(t *testing.T) int {
 // a ldap+starttls (required) profile "plain" over one plain testdir upstream.
 func daemonConfig(t *testing.T, dc *testdir.Server, caDir string, extra string) (path string, ldapsPort, plainPort int) {
 	t.Helper()
+	return daemonConfigVirola(t, dc, caDir, extra, "")
+}
+
+// daemonConfigVirola also inserts virolaExtra into the [profile.virola] table.
+func daemonConfigVirola(t *testing.T, dc *testdir.Server, caDir string, extra, virolaExtra string) (path string, ldapsPort, plainPort int) {
+	t.Helper()
 	ldapsPort, plainPort = freePort(t), freePort(t)
 	t.Setenv("ALDAP_TEST_SVC_PW", tSvcPW)
 	t.Setenv("ALDAP_TEST_CLIENT_PW", clientPassword)
@@ -100,6 +107,7 @@ upstream = "ad"
 virtual_base = "ou=virola,dc=aldap"
 bases = ["OU=Office,DC=test,DC=aldap", "OU=Branch,DC=test,DC=aldap"]
 rdn_attr = "sAMAccountName"
+%s
 [profile.virola.client_bind]
 dn = %q
 password_env = "ALDAP_TEST_CLIENT_PW"
@@ -126,7 +134,7 @@ default_domain = "test.aldap"
 [profile.plain.attrs]
 allow = ["sAMAccountName", "mail", "objectClass"]
 %s
-`, caDir, dc.URL(), tSvcDN, ldapsPort, tClientDN, plainPort, extra)
+`, caDir, dc.URL(), tSvcDN, ldapsPort, virolaExtra, tClientDN, plainPort, extra)
 	path = filepath.Join(t.TempDir(), "aldap.toml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -147,11 +155,17 @@ type running struct {
 
 func startDaemon(t *testing.T, extra string) *running {
 	t.Helper()
+	return startDaemonVirola(t, extra, "")
+}
+
+// startDaemonVirola starts a daemon with extra keys in [profile.virola].
+func startDaemonVirola(t *testing.T, extra, virolaExtra string) *running {
+	t.Helper()
 	dc := testdir.StartFixture(t)
 	caDir := filepath.Join(t.TempDir(), "ca")
-	path, lp, pp := daemonConfig(t, dc, caDir, extra)
+	path, lp, pp := daemonConfigVirola(t, dc, caDir, extra, virolaExtra)
 	logs := &safeBuffer{}
-	d, err := loadDaemon(path, true, daemonOptions{LogOut: logs, Secrets: secret.Default, Argon2: fastArgon, Hostname: "aldap-test"})
+	d, err := loadDaemon(path, true, daemonOptions{LogOut: logs, EventsOut: logs, Secrets: secret.Default, Argon2: fastArgon, Hostname: "aldap-test"})
 	if err != nil {
 		t.Fatalf("loadDaemon: %v", err)
 	}
@@ -353,7 +367,7 @@ func TestDaemon_Ldapsearch(t *testing.T) {
 func TestDaemon_BuildErrors(t *testing.T) {
 	dc := testdir.StartFixture(t)
 	caDir := filepath.Join(t.TempDir(), "ca")
-	opts := daemonOptions{LogOut: &safeBuffer{}, Secrets: secret.Default, Argon2: fastArgon}
+	opts := daemonOptions{LogOut: &safeBuffer{}, EventsOut: io.Discard, Secrets: secret.Default, Argon2: fastArgon}
 	// Invalid configuration.
 	path, _, _ := daemonConfig(t, dc, caDir, "[profile.bad]\nlisten = [\"127.0.0.1:1\"]\nupstream = \"ad\"\nvirtual_base = \"dc=bad\"\nbases = [\"DC=test,DC=aldap\"]\n[profile.bad.attrs]\nallow = [\"*\"]\n")
 	if _, err := loadDaemon(path, true, opts); err == nil || !strings.Contains(err.Error(), "configuration invalid") {
@@ -374,7 +388,7 @@ func TestDaemon_BuildErrors(t *testing.T) {
 	// honeypot profile is served (with a warning); a mock profile needs a readable file.
 	logs := &safeBuffer{}
 	path, _, _ = daemonConfig(t, dc, caDir, "[profile.honey]\nlisten = [\"127.0.0.1:1389\"]\ntransport = \"ldap\"\nupstream = \"ad\"\nmode = \"honeypot\"\nvirtual_base = \"dc=honey\"\n")
-	d, err := loadDaemon(path, true, daemonOptions{LogOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true})
+	d, err := loadDaemon(path, true, daemonOptions{LogOut: logs, EventsOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true})
 	if err != nil {
 		t.Fatalf("honeypot config: %v", err)
 	}
@@ -383,7 +397,7 @@ func TestDaemon_BuildErrors(t *testing.T) {
 	}
 	d.stop()
 	path, _, _ = daemonConfig(t, dc, caDir, "[profile.mock]\nlisten = [\"127.0.0.1:1390\"]\ntransport = \"ldap\"\nmode = \"mock\"\nvirtual_base = \"dc=mock\"\n[profile.mock.mock]\nfile = \"/nonexistent/mock.toml\"\n[profile.mock.attrs]\nallow = [\"cn\"]\n")
-	if _, err := loadDaemon(path, true, daemonOptions{LogOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true}); err == nil || !strings.Contains(err.Error(), "mock.file") {
+	if _, err := loadDaemon(path, true, daemonOptions{LogOut: logs, EventsOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true}); err == nil || !strings.Contains(err.Error(), "mock.file") {
 		t.Errorf("mock file missing: %v", err)
 	}
 	// Port already in use → start fails and cleans up.
@@ -393,7 +407,7 @@ func TestDaemon_BuildErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	d, err = loadDaemon(path, true, daemonOptions{LogOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true})
+	d, err = loadDaemon(path, true, daemonOptions{LogOut: logs, EventsOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +425,7 @@ func TestDaemon_BuildErrors(t *testing.T) {
 	}
 	// Bad TLS override is caught.
 	path, _, _ = daemonConfig(t, dc, caDir, "[profile.virola.tls]\nmin_version = \"1.3\"\nkey_type = \"rsa-2048\"\n")
-	d, err = loadDaemon(path, true, daemonOptions{LogOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true})
+	d, err = loadDaemon(path, true, daemonOptions{LogOut: logs, EventsOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true})
 	if err != nil {
 		t.Fatalf("tls override: %v", err)
 	}
@@ -467,7 +481,7 @@ func TestServe_Signals(t *testing.T) {
 	stdout := &safeBuffer{}
 	sigs := make(chan os.Signal, 1)
 	done := make(chan int, 1)
-	opts := daemonOptions{LogOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true}
+	opts := daemonOptions{LogOut: logs, EventsOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true}
 	go func() { done <- serve(context.Background(), path, true, opts, sigs, stdout) }()
 	waitFor(t, func() bool { return strings.Contains(stdout.String(), "listening") })
 	// Reload with the same configuration.

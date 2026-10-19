@@ -3,7 +3,9 @@ package listener
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,8 +58,97 @@ type Conn struct {
 	mu    sync.Mutex
 	bound Bound
 	store map[string]any
+	tlsFP string
+	fp    string
 
 	cancel context.CancelFunc
+
+	// Session counters (SPEC §6 session_summary).
+	bindsOK, bindsFail, searches, results, denied atomic.Int64
+	bytesIn, bytesOut                             atomic.Int64
+}
+
+// Fingerprinter receives the fingerprint of a connection once its first
+// packet is read (internal/ids implements it).
+type Fingerprinter interface {
+	Fingerprint(profile, ip, connID, fp string)
+}
+
+// HelloFingerprint hashes the negotiable parts of a TLS ClientHello
+// (JA3-like: versions, cipher suites, curves, point formats, signature
+// schemes and ALPN) into 16 hex characters.
+func HelloFingerprint(h *tls.ClientHelloInfo) string {
+	var b strings.Builder
+	write := func(prefix string, vals []uint16) {
+		b.WriteString(prefix)
+		for i, v := range vals {
+			if i > 0 {
+				b.WriteByte('-')
+			}
+			b.WriteString(strconv.Itoa(int(v)))
+		}
+		b.WriteByte(';')
+	}
+	write("v:", h.SupportedVersions)
+	write("c:", h.CipherSuites)
+	curves := make([]uint16, len(h.SupportedCurves))
+	for i, c := range h.SupportedCurves {
+		curves[i] = uint16(c)
+	}
+	write("e:", curves)
+	points := make([]uint16, len(h.SupportedPoints))
+	for i, p := range h.SupportedPoints {
+		points[i] = uint16(p)
+	}
+	write("p:", points)
+	sigs := make([]uint16, len(h.SignatureSchemes))
+	for i, s := range h.SignatureSchemes {
+		sigs[i] = uint16(s)
+	}
+	write("s:", sigs)
+	b.WriteString("a:" + strings.Join(h.SupportedProtos, ","))
+	sum := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(sum[:8])
+}
+
+func (c *Conn) setTLSFingerprint(fp string) {
+	c.mu.Lock()
+	c.tlsFP = fp
+	c.mu.Unlock()
+}
+
+// Fingerprint returns the connection fingerprint ("" before the first packet).
+func (c *Conn) Fingerprint() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fp
+}
+
+// firstPacketFingerprint combines the TLS hash with the LDAP first packet:
+// operation, LDAP version for binds, number of controls and a size bucket.
+func (c *Conn) firstPacketFingerprint(m *message, size int) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	bucket := 0
+	for n := size; n > 16; n >>= 1 {
+		bucket++
+	}
+	var ver int64
+	if m.Op == ldap.ApplicationBindRequest {
+		if req, err := parseBind(m.Body); err == nil {
+			ver = req.Version
+			wipe(req.Password)
+		}
+	}
+	c.fp = fmt.Sprintf("tls:%s|ldap:%d/%d/%d/%d", orDash(c.tlsFP), m.Op, ver, len(m.Controls), bucket)
+	return c.fp
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // NewConn builds a detached connection record (no socket) for handlers
@@ -159,7 +251,8 @@ func (c *Conn) write(b []byte, timeout time.Duration) error {
 			return err
 		}
 	}
-	_, err := c.nc.Write(b)
+	n, err := c.nc.Write(b)
+	c.bytesOut.Add(int64(n))
 	return err
 }
 
@@ -235,12 +328,20 @@ func (s *Server) serve(ctx context.Context, c *Conn) {
 			s.readFailed(c, err)
 			return
 		}
+		c.bytesIn.Add(int64(len(raw)))
+		first := timeout == s.cfg.FirstPacketTimeout && c.Fingerprint() == ""
 		timeout = s.cfg.IdleTimeout
 		msg, err := parseMessage(raw)
 		if err != nil {
 			s.log.Debug("malformed request", "conn_id", c.id, "err", err)
 			c.writeQuietly(s.log, encodeNotice(ldap.LDAPResultProtocolError, "malformed request"), s.cfg.WriteTimeout)
 			return
+		}
+		if first {
+			fp := c.firstPacketFingerprint(msg, len(raw))
+			if s.cfg.Fingerprints != nil {
+				s.cfg.Fingerprints.Fingerprint(c.profile, c.ClientIP(), c.id, fp)
+			}
 		}
 		if !s.dispatch(ctx, c, msg) {
 			return
@@ -305,6 +406,7 @@ func (s *Server) deny(c *Conn, m *message, oid string) bool {
 	if m.Op == ldap.ApplicationCompareRequest {
 		code = ldap.LDAPResultCompareFalse
 	}
+	c.denied.Add(1)
 	ev := c.Event(events.OpDenied, events.LevelMedium)
 	ev.Data = map[string]any{"op": op}
 	if oid != "" {
@@ -341,6 +443,11 @@ func (s *Server) handleBind(ctx context.Context, c *Conn, m *message) bool {
 		c.SetBound(Bound{Kind: BindAnonymous})
 		res = s.cfg.Handler.Bind(ctx, c, req.Name, req.Password)
 	}
+	if res.Code == ldap.LDAPResultSuccess {
+		c.bindsOK.Add(1)
+	} else {
+		c.bindsFail.Add(1)
+	}
 	return c.write(encodeResult(m.ID, ldap.ApplicationBindResponse, res), s.cfg.WriteTimeout) == nil
 }
 
@@ -366,7 +473,9 @@ func (s *Server) handleSearch(ctx context.Context, c *Conn, m *message) bool {
 	} else {
 		w := &entryWriter{c: c, id: m.ID, typesOnly: req.TypesOnly, timeout: s.cfg.WriteTimeout}
 		res = s.cfg.Handler.Search(ctx, c, req, w)
+		c.results.Add(int64(w.n))
 	}
+	c.searches.Add(1)
 	return c.write(encodeResult(m.ID, ldap.ApplicationSearchResultDone, res), s.cfg.WriteTimeout) == nil
 }
 
@@ -402,7 +511,7 @@ func (s *Server) startTLS(ctx context.Context, c *Conn, m *message) bool {
 	}
 	hctx, cancel := context.WithTimeout(ctx, s.cfg.HandshakeTimeout)
 	defer cancel()
-	tc := tls.Server(c.nc, s.cfg.TLS)
+	tc := tls.Server(c.nc, s.tlsFor(c))
 	if err := tc.HandshakeContext(hctx); err != nil {
 		s.log.Debug("StartTLS handshake failed", "conn_id", c.id, "client_ip", c.ClientIP(), "err", err)
 		return false

@@ -14,9 +14,11 @@ import (
 
 	"github.com/alstdev/aldap/internal/config"
 	"github.com/alstdev/aldap/internal/events"
+	"github.com/alstdev/aldap/internal/events/schematest"
 	"github.com/alstdev/aldap/internal/ldapfilter"
 	"github.com/alstdev/aldap/internal/listener"
 	"github.com/alstdev/aldap/internal/profile"
+	"github.com/alstdev/aldap/internal/ratelimit"
 	"github.com/alstdev/aldap/internal/testdir"
 	"github.com/alstdev/aldap/internal/upstream"
 )
@@ -41,6 +43,14 @@ func (s *sink) Emit(e events.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ev = append(s.ev, e)
+}
+
+// check validates every collected event against docs/events.schema.json.
+func (s *sink) check(t *testing.T) {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	schematest.CheckEvents(t, s.ev...)
 }
 
 func (s *sink) last(kind string) *events.Event {
@@ -113,8 +123,27 @@ func newFixture(t *testing.T, mut func(p *config.Profile), dcOpts ...testdir.Opt
 		t.Fatal(err)
 	}
 	ev := &sink{}
-	d := New(rules, up, Options{Logger: slog.New(slog.DiscardHandler), Events: ev, Version: "test", StartTLS: true, MaxPagingStates: 2})
+	d := New(rules, up, Options{Logger: slog.New(slog.DiscardHandler), Events: ev, Version: "test", StartTLS: true, MaxPagingStates: 2,
+		Guard: testGuard(t, ev, nil), Sleep: func(context.Context, time.Duration) {}})
+	// Every event the directory emitted must be valid against the schema (TESTING.md 34).
+	t.Cleanup(func() { ev.check(t) })
 	return &fixture{dc: dc, up: up, d: d, ev: ev, cfg: p}
+}
+
+// testGuard builds a rate-limit policy over a fresh limiter that reports
+// into ev; mod adjusts the defaults.
+func testGuard(t *testing.T, ev events.Sink, mod func(*config.Ratelimit)) *ratelimit.Policy {
+	t.Helper()
+	cfg := config.Default().Ratelimit
+	if mod != nil {
+		mod(&cfg)
+	}
+	l := ratelimit.New(ratelimit.Options{Events: ev, Logger: slog.New(slog.DiscardHandler)})
+	p, err := l.Policy("virola", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 func (f *fixture) search(t *testing.T, base string, scope listener.Scope, filter string, attrs ...string) (listener.Result, []listener.Entry) {

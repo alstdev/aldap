@@ -18,6 +18,7 @@ import (
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/alstdev/aldap/internal/events"
+	"github.com/alstdev/aldap/internal/events/schematest"
 	"github.com/alstdev/aldap/internal/tlsutil"
 )
 
@@ -145,6 +146,12 @@ type testServer struct {
 func start(t *testing.T, cfg Config) *testServer {
 	t.Helper()
 	ts := &testServer{h: &fakeHandler{}, ev: &sink{}}
+	// Every event the listener emitted must be valid against the schema (TESTING.md 34).
+	t.Cleanup(func() {
+		ts.ev.mu.Lock()
+		defer ts.ev.mu.Unlock()
+		schematest.CheckEvents(t, ts.ev.ev...)
+	})
 	if cfg.Handler == nil {
 		cfg.Handler = ts.h
 	} else if h, ok := cfg.Handler.(*fakeHandler); ok {

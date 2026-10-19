@@ -15,6 +15,7 @@ import (
 
 	"github.com/alstdev/aldap/internal/config"
 	"github.com/alstdev/aldap/internal/ldapfilter"
+	"github.com/alstdev/aldap/internal/metrics"
 )
 
 // Options tune an Upstream. All fields are optional.
@@ -25,6 +26,8 @@ type Options struct {
 	Events EventSink
 	// Now is the clock (tests).
 	Now func() time.Time
+	// Metrics receives upstream counters (nil = none).
+	Metrics *metrics.Metrics
 
 	dial dialFunc
 }
@@ -39,6 +42,7 @@ type Upstream struct {
 	log      *slog.Logger
 	events   EventSink
 	now      func() time.Time
+	metrics  *metrics.Metrics
 
 	rr      atomic.Uint32
 	current atomic.Int64
@@ -58,7 +62,7 @@ func New(name string, cfg *config.Upstream, bindPassword string, opts Options) (
 	if len(cfg.Servers) == 0 {
 		return nil, fmt.Errorf("upstream %s: no servers", name)
 	}
-	u := &Upstream{name: name, cfg: *cfg, password: bindPassword, log: opts.Logger, events: opts.Events, now: opts.Now, dial: opts.dial}
+	u := &Upstream{name: name, cfg: *cfg, password: bindPassword, log: opts.Logger, events: opts.Events, now: opts.Now, dial: opts.dial, metrics: opts.Metrics}
 	if u.log == nil {
 		u.log = slog.Default()
 	}
@@ -235,7 +239,7 @@ func (u *Upstream) candidates() []*server {
 // do runs fn against the candidate servers until one answers. A server
 // failure (connection error) is recorded against the server and, when retry
 // is set, the next candidate is tried; any other error is returned as is.
-func (u *Upstream) do(ctx context.Context, retry bool, fn func(ctx context.Context, s *server) error) error {
+func (u *Upstream) do(ctx context.Context, op string, retry bool, fn func(ctx context.Context, s *server) error) error {
 	if u.closed.Load() {
 		return ErrClosed
 	}
@@ -249,15 +253,18 @@ func (u *Upstream) do(ctx context.Context, retry bool, fn func(ctx context.Conte
 		err := fn(ctx, s)
 		d := u.now().Sub(start)
 		if err == nil {
+			u.metrics.Upstream(u.name, s.url.String(), op, "ok", d)
 			u.observe(s, true, nil, d)
 			u.current.Store(int64(s.index))
 			return nil
 		}
 		if !isConnError(err) {
 			// The server answered; the request itself failed.
+			u.metrics.Upstream(u.name, s.url.String(), op, "error", d)
 			u.observe(s, true, nil, d)
 			return err
 		}
+		u.metrics.Upstream(u.name, s.url.String(), op, "conn_error", d)
 		u.observe(s, false, err, d)
 		last = err
 		if ctx.Err() != nil || !retry {
@@ -277,6 +284,7 @@ func (u *Upstream) observe(s *server, ok bool, err error, d time.Duration) {
 	if !changed {
 		return
 	}
+	u.metrics.SetUpstreamUp(u.name, s.url.String(), tr.to == StateUp)
 	switch tr.to {
 	case StateUp:
 		u.log.Info("upstream server up", "server", s.url.String(), "consecutive", tr.consecutive)
@@ -376,7 +384,7 @@ func (u *Upstream) Search(ctx context.Context, req SearchRequest) (*Result, erro
 		return nil, err
 	}
 	var res *Result
-	err = u.do(ctx, true, func(ctx context.Context, s *server) error {
+	err = u.do(ctx, "search", true, func(ctx context.Context, s *server) error {
 		r, err := u.searchOn(ctx, s, req, filter)
 		if err != nil {
 			return err
@@ -504,7 +512,7 @@ func (u *Upstream) UserBind(ctx context.Context, dn, password string) error {
 	if dn == "" {
 		return &BindError{Reason: ReasonUnknownAccount, Err: errors.New("empty bind name")}
 	}
-	return u.do(ctx, true, func(ctx context.Context, s *server) error {
+	return u.do(ctx, "bind", true, func(ctx context.Context, s *server) error {
 		c, err := s.bind.get(ctx)
 		if err != nil {
 			return err

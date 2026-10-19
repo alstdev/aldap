@@ -16,6 +16,7 @@ import (
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/alstdev/aldap/internal/events"
+	"github.com/alstdev/aldap/internal/metrics"
 )
 
 // Transports of [profile.<name>].transport.
@@ -64,6 +65,11 @@ type Config struct {
 
 	Logger *slog.Logger
 	Events events.Sink
+	// Fingerprints receives the client fingerprint of every connection
+	// (TLS ClientHello hash and LDAP first packet); nil disables it.
+	Fingerprints Fingerprinter
+	// Metrics receives connection gauges (nil = none).
+	Metrics *metrics.Metrics
 }
 
 // Server serves one profile on one or more addresses.
@@ -198,7 +204,7 @@ func (s *Server) accept(nc net.Conn) {
 	}
 	c := &Conn{id: fmt.Sprintf("c-%08x", s.nextID.Add(1)), remote: nc.RemoteAddr(), profile: s.cfg.Profile, opened: time.Now(), nc: nc}
 	if s.ldaps {
-		tc := tls.Server(nc, s.cfg.TLS)
+		tc := tls.Server(nc, s.tlsFor(c))
 		c.nc = tc
 		c.tls.Store(true)
 	}
@@ -214,6 +220,7 @@ func (s *Server) accept(nc net.Conn) {
 	s.wg.Add(1)
 	s.mu.Unlock()
 	s.log.Debug("connection accepted", "conn_id", c.id, "client_ip", ip, "client_port", c.ClientPort())
+	s.cfg.Metrics.Connection(s.cfg.Profile, 1)
 	go func() {
 		defer s.wg.Done()
 		defer s.release(ip)
@@ -221,10 +228,39 @@ func (s *Server) accept(nc net.Conn) {
 			s.mu.Lock()
 			delete(s.conns, c)
 			s.mu.Unlock()
+			s.cfg.Metrics.Connection(s.cfg.Profile, -1)
 			s.log.Debug("connection closed", "conn_id", c.id, "client_ip", ip, "duration_ms", time.Since(c.opened).Milliseconds())
+			s.sessionSummary(c)
 		}()
 		s.serve(s.ctx, c)
 	}()
+}
+
+// sessionSummary reports the counters of a finished connection (SPEC §6).
+func (s *Server) sessionSummary(c *Conn) {
+	ev := c.Event(events.SessionSummary, events.LevelLow)
+	ev.Duration = time.Since(c.opened)
+	ev.Data = map[string]any{
+		"binds_ok": c.bindsOK.Load(), "binds_fail": c.bindsFail.Load(), "searches": c.searches.Load(), "results_total": c.results.Load(),
+		"denied": c.denied.Load(), "duration_ms": ev.Duration.Milliseconds(), "bytes_in": c.bytesIn.Load(), "bytes_out": c.bytesOut.Load(),
+		"fingerprint": c.Fingerprint(),
+	}
+	s.events.Emit(ev)
+}
+
+// tlsFor returns the TLS configuration for one connection: the shared one,
+// or a clone that records the ClientHello fingerprint when a Fingerprinter
+// is configured.
+func (s *Server) tlsFor(c *Conn) *tls.Config {
+	if s.cfg.Fingerprints == nil {
+		return s.cfg.TLS
+	}
+	cfg := s.cfg.TLS.Clone()
+	cfg.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+		c.setTLSFingerprint(HelloFingerprint(hello))
+		return nil, nil
+	}
+	return cfg
 }
 
 func (s *Server) release(ip string) {

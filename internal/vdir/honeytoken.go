@@ -1,78 +1,62 @@
 package vdir
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/alstdev/aldap/internal/events"
+	"github.com/alstdev/aldap/internal/ids"
 	"github.com/alstdev/aldap/internal/ldapfilter"
 	"github.com/alstdev/aldap/internal/listener"
 	"github.com/alstdev/aldap/internal/profile"
+	"github.com/alstdev/aldap/internal/ratelimit"
 	"github.com/alstdev/aldap/internal/upstream"
 )
 
-// Locker records source locks. The rate limiter of Stage 6 implements it;
-// until then MemoryLocks is used (docs/DECISIONS.md).
-type Locker interface {
+// Guard is the rate limiter in front of the directory (internal/ratelimit
+// implements it): source locks, the bind and search gates and the
+// post-bind bookkeeping (failure windows, negative cache, delays).
+type Guard interface {
 	// LockIP locks ip until the given time; source names the cause.
 	LockIP(ip string, until time.Time, source string)
 	// IPLocked reports whether ip is locked at now and until when.
 	IPLocked(ip string, now time.Time) (time.Time, bool)
+	// HashPassword returns the salted hash used for negative caching and
+	// spray detection; the password itself is never kept.
+	HashPassword(password []byte) string
+	// PreBind decides whether a bind may go to the upstream.
+	PreBind(ip, account, pwHash string) ratelimit.Verdict
+	// PostBind records the outcome and returns how long to delay the answer.
+	PostBind(ip, account, pwHash string, ok bool, reason string, elapsed time.Duration) time.Duration
+	// PreSearch decides whether a search may be served.
+	PreSearch(ip, account string) ratelimit.Verdict
 }
 
-// MemoryLocks is an in-memory Locker shared by every profile of a process.
-type MemoryLocks struct {
-	mu sync.Mutex
-	m  map[string]time.Time
+// Observer receives what the intrusion detectors analyze (internal/ids).
+type Observer interface {
+	Bind(ids.BindObs)
+	Search(ids.SearchObs)
 }
 
-// NewMemoryLocks returns an empty lock table.
-func NewMemoryLocks() *MemoryLocks { return &MemoryLocks{m: map[string]time.Time{}} }
+// noGuard allows everything and keeps no locks: handler tests and
+// `aldap check --as-client`.
+type noGuard struct{}
 
-// LockIP implements Locker; a later expiry replaces an earlier one.
-func (l *MemoryLocks) LockIP(ip string, until time.Time, _ string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if cur, ok := l.m[ip]; !ok || until.After(cur) {
-		l.m[ip] = until
-	}
-	if len(l.m) > 100000 {
-		for k, v := range l.m {
-			if !until.Before(v) {
-				delete(l.m, k)
-			}
-		}
-	}
+func (noGuard) LockIP(string, time.Time, string)             {}
+func (noGuard) IPLocked(string, time.Time) (time.Time, bool) { return time.Time{}, false }
+func (noGuard) HashPassword(password []byte) string {
+	return fmt.Sprintf("%x", sha256.Sum256(password))
 }
-
-// IPLocked implements Locker.
-func (l *MemoryLocks) IPLocked(ip string, now time.Time) (time.Time, bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	until, ok := l.m[ip]
-	if !ok {
-		return time.Time{}, false
-	}
-	if !now.Before(until) {
-		delete(l.m, ip)
-		return time.Time{}, false
-	}
-	return until, true
+func (noGuard) PreBind(string, string, string) ratelimit.Verdict {
+	return ratelimit.Verdict{Allowed: true}
 }
+func (noGuard) PostBind(string, string, string, bool, string, time.Duration) time.Duration { return 0 }
+func (noGuard) PreSearch(string, string) ratelimit.Verdict                                 { return ratelimit.Verdict{Allowed: true} }
 
-// Locks returns the lock table of the directory.
-func (d *Directory) Locks() Locker { return d.o.Locks }
-
-// ipLocked reports whether the connection's source IP is locked.
-func (d *Directory) ipLocked(c *listener.Conn) bool {
-	ip := c.ClientIP()
-	if ip == "" {
-		return false
-	}
-	_, locked := d.o.Locks.IPLocked(ip, d.now())
-	return locked
-}
+// Guard returns the guard of the directory.
+func (d *Directory) Guard() Guard { return d.o.Guard }
 
 // honeytokenHit records a trap hit (SPEC §4.5): a honeytoken event of level
 // high and an IP lock for honeytoken_lock, reported as a lock event.
@@ -87,12 +71,8 @@ func (d *Directory) honeytokenHit(c *listener.Conn, op, account string) {
 	if ip == "" {
 		return
 	}
-	until := d.now().Add(d.o.HoneytokenLock)
-	d.o.Locks.LockIP(ip, until, "honeytoken")
-	lk := c.Event(events.Lock, events.LevelMedium)
-	lk.Account = account
-	lk.Data = map[string]any{"target": "ip", "key": ip, "until": until.UTC().Format(time.RFC3339Nano), "source": "honeytoken", "failures": 0}
-	d.ev.Emit(lk)
+	// The guard records the lock and reports the lock event (SPEC §6 lock{source=honeytoken}).
+	d.o.Guard.LockIP(ip, d.now().Add(d.o.HoneytokenLock), ratelimit.SourceHoneytoken)
 }
 
 // honeytokenTarget finds the trap a search targets unambiguously: an
