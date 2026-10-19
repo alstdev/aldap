@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-ldap/ldap/v3"
 
+	"github.com/alstdev/aldap/internal/ratelimit"
 	"github.com/alstdev/aldap/internal/testdir"
 )
 
@@ -194,6 +195,9 @@ func TestDaemon_Virola(t *testing.T) {
 		t.Errorf("bind_blocked missing:\n%s", r.logs.String())
 	}
 	// Paged search over users with memberOf still works on the bound session.
+	// The trap hit locked this source for every operation (Stage 6); the
+	// rest of the scenario needs the client connection back.
+	r.d.state.limiter.Unlock(ratelimit.TargetIP, "127.0.0.1", ratelimit.SourceAPI)
 	paged, err := c.SearchWithPaging(ldap.NewSearchRequest(vUsers, ldap.ScopeWholeSubtree, 0, 0, 0, false, "(objectClass=*)", []string{"uid", "memberOf"}, nil), 7)
 	if err != nil || len(paged.Entries) != 20 {
 		t.Errorf("paged: %v %d", err, len(paged.Entries))

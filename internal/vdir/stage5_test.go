@@ -372,6 +372,9 @@ func TestHoneytokens(t *testing.T) {
 		p.HoneytokenTemplate = map[string]string{"title": "{{ .domain }} admin", "department": "Finance"}
 	})
 	f.d.o.HoneytokenLock = time.Hour
+	// Trap binds fail like any other bind and would lock the trap account
+	// after account.max_failures; keep the account gate open for this test.
+	f.d.o.Guard = testGuard(t, f.ev, func(c *config.Ratelimit) { c.Account.MaxFailures = 100 })
 	c := testConn("10.9.8.7")
 	// The trap is listed like a real user, with computed/mapped attributes, and in the group.
 	_, es := f.search(t, usersDN, listener.ScopeSub, "(objectClass=*)", "uid", "memberOf", "title")
@@ -405,33 +408,35 @@ func TestHoneytokens(t *testing.T) {
 		t.Errorf("traps missing from the group: %v", attr(es[0], "member"))
 	}
 	// Targeted searches hit: identity attributes (mapped too) and the single-user base.
-	for _, tc := range []struct{ base, filter string }{
+	// Every case comes from its own IP: the first hit locks the source.
+	for i, tc := range []struct{ base, filter string }{
 		{usersDN, "(sAMAccountName=H.Petrenko)"}, {usersDN, "(mail=" + honeyAcct + ")"}, {usersDN, "(uid=h.petrenko)"},
 		{usersDN, "(&(objectClass=user)(userPrincipalName=" + honeyAcct + "))"}, {"cn=h.petrenko," + usersDN, "(objectClass=*)"},
 		{usersDN, "(cn=Backup Admin)"}, {vb, "(|(uid=alice.adams)(uid=backup-admin))"},
 	} {
 		f.ev.ev = nil
-		cc := testConn("10.9.8.7")
+		ip := fmt.Sprintf("10.9.8.%d", 7+i)
+		cc := testConn(ip)
 		res, es := f.searchFrom(t, cc, tc.base, listener.ScopeSub, tc.filter, "uid")
 		if res.Code != 0 || len(es) == 0 {
 			t.Errorf("%s: %v %v", tc.filter, res, dns(es))
 		}
 		ev := f.ev.last(events.Honeytoken)
-		if ev == nil || ev.Level != events.LevelHigh || ev.Data["op"] != "search" || ev.ClientIP != "10.9.8.7" {
+		if ev == nil || ev.Level != events.LevelHigh || ev.Data["op"] != "search" || ev.ClientIP != ip {
 			t.Errorf("%s: honeytoken event = %+v", tc.filter, ev)
 		}
 		lk := f.ev.last(events.Lock)
-		if lk == nil || lk.Data["target"] != "ip" || lk.Data["key"] != "10.9.8.7" || lk.Data["source"] != "honeytoken" {
+		if lk == nil || lk.Data["target"] != "ip" || lk.Data["key"] != ip || lk.Data["source"] != "honeytoken" {
 			t.Errorf("%s: lock event = %+v", tc.filter, lk)
 		}
 		if se := f.ev.last(events.Search); se.Data["honeytoken"] == nil {
 			t.Errorf("%s: search event lacks honeytoken: %v", tc.filter, se.Data)
 		}
 	}
-	if until, ok := f.d.Locks().IPLocked("10.9.8.7", f.d.now()); !ok || until.Before(f.d.now().Add(59*time.Minute)) {
+	if until, ok := f.d.Guard().IPLocked("10.9.8.7", f.d.now()); !ok || until.Before(f.d.now().Add(59*time.Minute)) {
 		t.Errorf("ip not locked: %v %v", until, ok)
 	}
-	// A locked IP cannot bind at all; searches on existing sessions go on.
+	// A locked IP can neither bind nor search, even on an existing session.
 	f.ev.ev = nil
 	if res := f.bind(t, c, clientDN, clientPW); res.Code != ldap.LDAPResultInvalidCredentials {
 		t.Errorf("bind from locked ip = %v", res)
@@ -439,7 +444,13 @@ func TestHoneytokens(t *testing.T) {
 	if ev := f.ev.last(events.BindBlocked); ev == nil || ev.Reason != "ip_locked" {
 		t.Errorf("bind_blocked = %+v", ev)
 	}
-	if res := f.bind(t, testConn("10.9.8.8"), clientDN, clientPW); res.Code != 0 {
+	if res, es := f.searchFrom(t, testConn("10.9.8.7"), usersDN, listener.ScopeSub, "(uid=alice*)", "uid"); res.Code != ldap.LDAPResultUnwillingToPerform || len(es) != 0 {
+		t.Errorf("search from locked ip = %v %v", res, dns(es))
+	}
+	if ev := f.ev.last(events.RateLimited); ev == nil || ev.Reason != "ip_locked" || ev.Data["op"] != "search" {
+		t.Errorf("rate_limited = %+v", ev)
+	}
+	if res := f.bind(t, testConn("10.9.9.100"), clientDN, clientPW); res.Code != 0 {
 		t.Errorf("bind from another ip = %v", res)
 	}
 	// Binds on trap accounts in every form hit and never reach the upstream.
@@ -447,7 +458,9 @@ func TestHoneytokens(t *testing.T) {
 		f.ev.ev = nil
 		before := f.dc.Calls().Binds
 		cc := testConn(fmt.Sprintf("10.9.9.%d", i)) // every hit locks its source
-		if res := f.bind(t, cc, name, "whatever"); res.Code != ldap.LDAPResultInvalidCredentials {
+		// A new password each time: the same (account, password) pair would be
+		// answered from the negative cache without reaching the trap logic.
+		if res := f.bind(t, cc, name, fmt.Sprintf("whatever-%d", i)); res.Code != ldap.LDAPResultInvalidCredentials {
 			t.Errorf("%s: bind = %v", name, res)
 		}
 		if ev := f.ev.last(events.Honeytoken); ev == nil || ev.Data["op"] != "bind" || (ev.Data["account"] != honeyAcct && ev.Data["account"] != "backup-admin") {
@@ -500,14 +513,15 @@ func TestHoneypot(t *testing.T) {
 	}
 	for i, name := range []string{clientDN, "alice.adams@test.aldap", "cn=alice.adams," + usersDN, "x"} {
 		f.ev.ev = nil
-		if res := f.bind(t, testConn(fmt.Sprintf("192.0.2.%d", 2+i)), name, "pw"); res.Code != ldap.LDAPResultInvalidCredentials {
+		// Distinct passwords: a repeated (account, password) pair is answered from the negative cache.
+		if res := f.bind(t, testConn(fmt.Sprintf("192.0.2.%d", 2+i)), name, fmt.Sprintf("pw-%d", i)); res.Code != ldap.LDAPResultInvalidCredentials {
 			t.Errorf("%s: honeypot bind = %v", name, res)
 		}
 		if ev := f.ev.last(events.Honeytoken); ev == nil || ev.Data["op"] != "bind" || ev.Account != name {
 			t.Errorf("%s: event = %+v", name, ev)
 		}
 	}
-	if _, ok := f.d.Locks().IPLocked("192.0.2.2", f.d.now()); !ok {
+	if _, ok := f.d.Guard().IPLocked("192.0.2.2", f.d.now()); !ok {
 		t.Error("honeypot bind did not lock the ip")
 	}
 	if f.dc.Calls() != before {
@@ -669,25 +683,20 @@ func TestTestAndLocks(t *testing.T) {
 	if r.Result.Code != ldap.LDAPResultNoSuchObject || !strings.Contains(r.String(), "# result: 32") {
 		t.Errorf("outside = %+v", r)
 	}
-	// MemoryLocks semantics.
-	l := NewMemoryLocks()
-	now := time.Now()
-	if _, ok := l.IPLocked("1.1.1.1", now); ok {
-		t.Error("fresh table locked")
-	}
-	l.LockIP("1.1.1.1", now.Add(time.Hour), "honeytoken")
-	l.LockIP("1.1.1.1", now.Add(time.Minute), "honeytoken") // shorter lock does not shrink
-	if until, ok := l.IPLocked("1.1.1.1", now); !ok || !until.Equal(now.Add(time.Hour)) {
-		t.Errorf("lock = %v %v", until, ok)
-	}
-	if _, ok := l.IPLocked("1.1.1.1", now.Add(2*time.Hour)); ok {
-		t.Error("expired lock still active")
-	}
-	if _, ok := l.IPLocked("1.1.1.1", now); ok {
-		t.Error("expired lock not purged")
-	}
+	// Without a guard the directory never locks and never delays.
 	d := New(f.d.rules, f.up, Options{})
-	if d.Locks() == nil || d.o.HoneytokenLock != 24*time.Hour {
+	if d.Guard() == nil || d.o.HoneytokenLock != 24*time.Hour {
 		t.Error("defaults")
+	}
+	g := d.Guard()
+	g.LockIP("1.1.1.1", time.Now().Add(time.Hour), "honeytoken")
+	if _, ok := g.IPLocked("1.1.1.1", time.Now()); ok {
+		t.Error("noGuard locked")
+	}
+	if v := g.PreBind("1.1.1.1", "a", g.HashPassword([]byte("x"))); !v.Allowed || g.PostBind("1.1.1.1", "a", "h", false, "invalid_password", 0) != 0 || !g.PreSearch("1.1.1.1", "").Allowed {
+		t.Error("noGuard limited")
+	}
+	if g.HashPassword([]byte("a")) == g.HashPassword([]byte("b")) {
+		t.Error("noGuard hash")
 	}
 }

@@ -14,8 +14,10 @@ import (
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/alstdev/aldap/internal/events"
+	"github.com/alstdev/aldap/internal/ids"
 	"github.com/alstdev/aldap/internal/ldapfilter"
 	"github.com/alstdev/aldap/internal/listener"
+	"github.com/alstdev/aldap/internal/metrics"
 	"github.com/alstdev/aldap/internal/profile"
 	"github.com/alstdev/aldap/internal/upstream"
 )
@@ -38,11 +40,17 @@ type Options struct {
 	StartTLS bool
 	// MaxPagingStates bounds the paged-results cursors kept per connection (0 = 8).
 	MaxPagingStates int
-	// Locks records honeytoken IP locks (nil = a private MemoryLocks).
-	Locks Locker
+	// Guard is the rate limiter (nil = no limits and no locks).
+	Guard Guard
+	// Observer feeds the intrusion detectors (nil = none).
+	Observer Observer
 	// HoneytokenLock is the IP lock applied on a honeytoken hit (0 = 24h).
 	HoneytokenLock time.Duration
 	Now            func() time.Time
+	// Sleep performs the delays the guard asks for (nil = time.Sleep with ctx).
+	Sleep func(context.Context, time.Duration)
+	// Metrics receives counters and histograms (nil = none).
+	Metrics *metrics.Metrics
 }
 
 // Directory serves one profile. It implements listener.Handler. up is nil
@@ -77,8 +85,11 @@ func New(rules *profile.Rules, up Searcher, o Options) *Directory {
 	if d.o.MaxPagingStates <= 0 {
 		d.o.MaxPagingStates = 8
 	}
-	if d.o.Locks == nil {
-		d.o.Locks = NewMemoryLocks()
+	if d.o.Guard == nil {
+		d.o.Guard = noGuard{}
+	}
+	if d.o.Sleep == nil {
+		d.o.Sleep = sleepCtx
 	}
 	if d.o.HoneytokenLock <= 0 {
 		d.o.HoneytokenLock = 24 * time.Hour
@@ -91,6 +102,19 @@ func New(rules *profile.Rules, up Searcher, o Options) *Directory {
 
 // Rules returns the compiled profile rules.
 func (d *Directory) Rules() *profile.Rules { return d.rules }
+
+// sleepCtx waits d or until ctx ends.
+func sleepCtx(ctx context.Context, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+	case <-t.C:
+	}
+}
 
 func (d *Directory) upstreamName() string {
 	if d.up == nil {
@@ -125,6 +149,8 @@ type searchCtx struct {
 	queries int
 	server  string
 	trap    string // honeytoken account targeted, "" when none
+	kind    profile.BaseKind
+	known   bool // kind is set (first page of a search)
 }
 
 // Search answers a client search (SPEC §4.2). A paged request with a
@@ -132,6 +158,9 @@ type searchCtx struct {
 // runs the pipeline.
 func (d *Directory) Search(ctx context.Context, c *listener.Conn, req *listener.SearchRequest, w listener.EntryWriter) listener.Result {
 	sc := &searchCtx{conn: c, req: req, start: d.now()}
+	if res, ok := d.searchGate(ctx, sc); !ok {
+		return res
+	}
 	var paging *ldap.ControlPaging
 	for _, ctl := range req.Controls {
 		if p, ok := ctl.(*ldap.ControlPaging); ok {
@@ -160,7 +189,66 @@ func (d *Directory) Search(ctx context.Context, c *listener.Conn, req *listener.
 		}
 	}
 	d.emitSearch(sc, res, len(entries))
+	d.observeSearch(sc)
 	return res
+}
+
+// searchGate applies the rate limiter before any work: a refused search
+// is answered with the guard's code and reported as rate_limited; a
+// tarpitted one waits first.
+func (d *Directory) searchGate(ctx context.Context, sc *searchCtx) (listener.Result, bool) {
+	c := sc.conn
+	v := d.o.Guard.PreSearch(c.ClientIP(), c.Bound().Name)
+	if v.Done != nil {
+		defer v.Done()
+	}
+	if v.Wait > 0 {
+		d.o.Sleep(ctx, v.Wait)
+	}
+	if v.Allowed {
+		return listener.Result{}, true
+	}
+	ev := c.Event(events.RateLimited, events.LevelLow)
+	ev.Reason = v.Reason
+	ev.Data = map[string]any{"target": "ip", "key": c.ClientIP(), "op": "search", "reason": v.Reason}
+	d.ev.Emit(ev)
+	d.log.Info("search refused", "conn_id", c.ID(), "client_ip", c.ClientIP(), "reason", v.Reason)
+	return listener.Result{Code: v.Code}, false
+}
+
+// observeSearch hands the first page of a search to the detectors.
+func (d *Directory) observeSearch(sc *searchCtx) {
+	if d.o.Observer == nil || !sc.known {
+		return
+	}
+	if (sc.kind == profile.BaseRootDSE || sc.kind == profile.BaseSubschema) && sc.req.Scope == listener.ScopeBase {
+		return
+	}
+	c := sc.conn
+	d.o.Observer.Search(ids.SearchObs{Profile: d.rules.Name, IP: c.ClientIP(), ConnID: c.ID(), Account: c.Bound().Name,
+		Base: sc.req.Base, Scope: sc.req.Scope.String(), FilterNorm: redactFilter(sc.filter), Filter: sc.filter, Attrs: sc.req.Attrs, BaseKind: baseKindName(sc.kind)})
+}
+
+// baseKindName names a base kind for the detectors.
+func baseKindName(k profile.BaseKind) string {
+	switch k {
+	case profile.BaseRootDSE:
+		return "rootdse"
+	case profile.BaseSubschema:
+		return "subschema"
+	case profile.BaseVirtual:
+		return "virtual"
+	case profile.BaseUsers:
+		return "users"
+	case profile.BaseGroups:
+		return "groups"
+	case profile.BaseUser:
+		return "user"
+	case profile.BaseGroup:
+		return "group"
+	case profile.BaseOutside:
+	}
+	return "outside"
 }
 
 // search runs the pipeline up to the merged, transformed, size-limited
@@ -177,7 +265,9 @@ func (d *Directory) search(ctx context.Context, sc *searchCtx) (listener.Result,
 	sc.filter = f
 	sc.want, sc.all, sc.denied = d.requestedAttrs(req.Attrs)
 	kind, rdn, err := d.rules.ClassifyBase(req.Base)
+	sc.kind, sc.known = kind, true
 	if err != nil || kind == profile.BaseOutside {
+		sc.kind = profile.BaseOutside
 		return listener.Result{Code: ldap.LDAPResultNoSuchObject}, nil
 	}
 	d.detectTrap(sc, kind, rdn)
@@ -785,4 +875,9 @@ func (d *Directory) emitSearch(sc *searchCtx, res listener.Result, results int) 
 	}
 	ev.Data = data
 	d.ev.Emit(ev)
+	cache := "none"
+	if sc.queries == 0 {
+		cache = "local"
+	}
+	d.o.Metrics.Search(d.rules.Name, cache, results, sc.queries)
 }

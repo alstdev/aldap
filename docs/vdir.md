@@ -107,11 +107,12 @@ identity attribute (`sAMAccountName`, `userPrincipalName`, `mail`, `cn`,
 `uid`, `displayName`, `name`, mapped names too) with a trap value, or
 whose base is the trap's user DN. A hit emits `honeytoken{account, op}`
 (level high) and locks the client IP for `ids.honeytoken.lock_duration`
-(`lock{target=ip, key, until, source=honeytoken}`); binds from a locked IP
-are refused with `invalidCredentials` and `bind_blocked{reason=ip_locked}`
-until Stage 6 replaces the in-memory `vdir.MemoryLocks` with the rate
-limiter. Trap binds never reach the upstream (`bind_fail{unknown_account}`
-is emitted as well). The `search` event carries `honeytoken=<account>`.
+(`lock{target=ip, key, until, source=honeytoken}`, recorded and reported by
+the rate limiter behind `vdir.Guard`, see `docs/security.md`); binds from a
+locked IP are refused with `lock_response` and `bind_blocked{reason=ip_locked}`,
+searches with `unwillingToPerform` and `rate_limited{reason=ip_locked}`.
+Trap binds never reach the upstream (`bind_fail{unknown_account}` is
+emitted as well). The `search` event carries `honeytoken=<account>`.
 
 `mode = honeypot`: no upstream is used; the root DSE and subschema answer
 normally, every search of the virtual tree and every non-anonymous bind
@@ -151,7 +152,7 @@ virtual tree or an unreachable upstream).
   with depth limits and loops, computed/mask/objectclass with
   post-filtering, honeytokens (listing, every targeting form, locks,
   `bind_blocked`, `honeytoken_in_groups`), honeypot, mock (TOML/CSV, binds,
-  errors), `Test()` and `MemoryLocks`; `match_test.go` for the local matcher.
+  errors), `Test()` and the guard defaults; `match_test.go` for the local matcher.
 - `cmd/aldap/stage5_test.go` (`-tags integration`): the Virola scenario
   end to end over ldaps with go-ldap (user bind UPN with
   `require_membership`, memberOf, nested `staff`, computed mail filter,

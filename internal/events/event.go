@@ -1,7 +1,7 @@
-// Package events defines the ALDAP event record (SPEC §6, aldap.event.v1)
-// and the sink interface producers emit to. The bus, the envelope fields
-// (ts, id, seq, host) and the sinks arrive with Stage 6; until then the
-// daemon logs events through slog.
+// Package events defines the ALDAP event record (SPEC §6, aldap.event.v1),
+// the sink interface producers emit to, the process-wide Bus that wraps
+// events into the envelope (ts, id, seq, host), keeps the ring buffer and
+// fans records out to the configured sinks (stdout, file, syslog, webhook).
 package events
 
 import (
@@ -13,22 +13,36 @@ import (
 // Event kinds emitted by the daemon (SPEC §6). The list mirrors the enum of
 // docs/events.schema.json.
 const (
-	BindOK         = "bind_ok"
-	BindFail       = "bind_fail"
-	BindBlocked    = "bind_blocked"
-	Lock           = "lock"
-	Honeytoken     = "honeytoken"
-	Search         = "search"
-	OpDenied       = "op_denied"
-	RateLimited    = "rate_limited"
-	UpstreamDown   = "upstream_down"
-	UpstreamUp     = "upstream_up"
-	CertExpiring   = "cert_expiring"
-	CertRenewed    = "cert_renewed"
-	ConfigReload   = "config_reload"
-	InsecureConfig = "insecure_config"
-	Startup        = "startup"
-	Shutdown       = "shutdown"
+	BindOK            = "bind_ok"
+	BindFail          = "bind_fail"
+	BindBlocked       = "bind_blocked"
+	Lock              = "lock"
+	Unlock            = "unlock"
+	AttackStart       = "attack_start"
+	AttackSummary     = "attack_summary"
+	AttackEnd         = "attack_end"
+	Recon             = "recon"
+	Anomaly           = "anomaly"
+	Honeytoken        = "honeytoken"
+	Search            = "search"
+	OpDenied          = "op_denied"
+	SessionSummary    = "session_summary"
+	RateLimited       = "rate_limited"
+	Tarpit            = "tarpit"
+	Lockdown          = "lockdown"
+	UpstreamDown      = "upstream_down"
+	UpstreamUp        = "upstream_up"
+	StaleServed       = "stale_served"
+	ReplicaSyncFailed = "replica_sync_failed"
+	ReplicaSynced     = "replica_synced"
+	CertExpiring      = "cert_expiring"
+	CertRenewed       = "cert_renewed"
+	ConfigReload      = "config_reload"
+	InsecureConfig    = "insecure_config"
+	ShadowDiff        = "shadow_diff"
+	APICall           = "api_call"
+	Startup           = "startup"
+	Shutdown          = "shutdown"
 )
 
 // Levels.
@@ -58,6 +72,8 @@ type Event struct {
 	Account string
 	// Reason is the event-specific reason (bind_fail, bind_blocked, rate_limited).
 	Reason string
+	// Failures is the failure counter that accompanies bind_fail and lock (0 = unset).
+	Failures int
 	// Upstream and UpstreamServer name the directory that served the request.
 	Upstream       string
 	UpstreamServer string
@@ -101,6 +117,9 @@ func (e Event) Attrs() []slog.Attr {
 	}
 	add("account", e.Account)
 	add("reason", e.Reason)
+	if e.Failures != 0 {
+		out = append(out, slog.Int("failures", e.Failures))
+	}
 	add("upstream", e.Upstream)
 	add("upstream_server", e.UpstreamServer)
 	if e.Duration != 0 {

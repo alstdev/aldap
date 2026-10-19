@@ -463,7 +463,8 @@ func TestIntegration_RoundRobin(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if dc1.Calls().Searches != 3 || dc2.Calls().Searches != 3 {
+	// Health probes read the root DSE and are excluded from the count.
+	if clientSearches(dc1) != 3 || clientSearches(dc2) != 3 {
 		t.Fatalf("not balanced: %+v %+v", dc1.Calls(), dc2.Calls())
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/alstdev/aldap/internal/events"
+	"github.com/alstdev/aldap/internal/ids"
 	"github.com/alstdev/aldap/internal/ldapfilter"
 	"github.com/alstdev/aldap/internal/listener"
 	"github.com/alstdev/aldap/internal/profile"
@@ -23,17 +24,48 @@ var invalidCredentials = listener.Result{Code: ldap.LDAPResultInvalidCredentials
 func (d *Directory) Bind(ctx context.Context, c *listener.Conn, name string, password []byte) listener.Result {
 	start := d.now()
 	b := &bindCtx{conn: c, name: name, start: start}
-	if d.ipLocked(c) {
+	// Gate (SPEC §9): locks, negative cache, lockdown and rate limits answer
+	// without touching the upstream.
+	ip := c.ClientIP()
+	acct := d.guardAccount(name)
+	pwHash := d.o.Guard.HashPassword(password)
+	v := d.o.Guard.PreBind(ip, acct, pwHash)
+	if v.Done != nil {
+		defer v.Done()
+	}
+	if v.Wait > 0 {
+		d.o.Sleep(ctx, v.Wait)
+	}
+	if !v.Allowed {
+		d.o.Metrics.Bind(d.rules.Name, "blocked", d.now().Sub(start))
 		ev := c.Event(events.BindBlocked, events.LevelMedium)
 		ev.Account = strings.TrimSpace(name)
-		ev.Reason = "ip_locked"
-		ev.Data = map[string]any{"reason": "ip_locked"}
+		ev.Reason = v.Reason
+		ev.Data = map[string]any{"reason": v.Reason}
 		d.ev.Emit(ev)
-		d.log.Info("bind blocked", "conn_id", c.ID(), "client_ip", c.ClientIP(), "reason", "ip_locked")
-		return invalidCredentials
+		d.log.Info("bind blocked", "conn_id", c.ID(), "client_ip", ip, "reason", v.Reason)
+		if d.o.Observer != nil && acct != "" {
+			// The detectors see the attempt even though it was refused.
+			d.o.Observer.Bind(ids.BindObs{Profile: d.rules.Name, IP: ip, ConnID: c.ID(), Account: acct, PwHash: pwHash, OK: false, Reason: v.Reason})
+		}
+		return listener.Result{Code: v.Code}
 	}
 	res := d.bind(ctx, b, password)
-	if res.Code == ldap.LDAPResultSuccess {
+	ok := res.Code == ldap.LDAPResultSuccess
+	elapsed := d.now().Sub(start)
+	wait := d.o.Guard.PostBind(ip, acct, pwHash, ok, string(b.reason), elapsed)
+	if ok {
+		d.o.Metrics.Bind(d.rules.Name, "ok", elapsed)
+	} else {
+		d.o.Metrics.Bind(d.rules.Name, "fail", elapsed)
+	}
+	if d.o.Observer != nil && b.kind != listener.BindAnonymous {
+		d.o.Observer.Bind(ids.BindObs{Profile: d.rules.Name, IP: ip, ConnID: c.ID(), Account: acct, PwHash: pwHash, OK: ok, Reason: string(b.reason)})
+	}
+	if wait > 0 {
+		d.o.Sleep(ctx, wait)
+	}
+	if ok {
 		c.SetBound(listener.Bound{Kind: b.kind, Name: name, UpstreamDN: b.upstreamDN})
 		ev := c.Event(events.BindOK, events.LevelLow)
 		ev.Account = b.account
@@ -63,6 +95,27 @@ func (d *Directory) Bind(ctx context.Context, c *listener.Conn, name string, pas
 	d.ev.Emit(ev)
 	d.log.Info("bind failed", "conn_id", c.ID(), "client_ip", c.ClientIP(), "account", b.account, "reason", string(b.reason), "result", res.Code)
 	return res
+}
+
+// guardAccount is the account key the guard counts failures under: the
+// normalized user account, or the name as presented for client binds.
+func (d *Directory) guardAccount(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if dn, err := ldapfilter.ParseDN(name); err == nil && d.rules.IsClientBindDN(dn) {
+		return strings.ToLower(name)
+	}
+	acct := strings.ToLower(d.rules.NormalizeBindName(name).Account)
+	// user@domain, DOMAIN\user and user count as one account.
+	if i := strings.IndexByte(acct, '@'); i > 0 {
+		acct = acct[:i]
+	}
+	if i := strings.LastIndexByte(acct, '\\'); i >= 0 {
+		acct = acct[i+1:]
+	}
+	return acct
 }
 
 // bindCtx carries one bind through the pipeline.

@@ -47,6 +47,10 @@ func serve(ctx context.Context, path string, required bool, o daemonOptions, sig
 		fmt.Fprintf(o.LogOut, "aldap run: %v\n", err)
 		return 1
 	}
+	// The bus, locks and detector state outlive reloads (SPEC §6 seq is
+	// monotonic per process; lock state is kept across configuration changes).
+	o.State = d.state
+	defer d.state.bus.Close()
 	if err := d.start(ctx); err != nil {
 		fmt.Fprintf(o.LogOut, "aldap run: %v\n", err)
 		d.stop()

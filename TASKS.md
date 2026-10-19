@@ -72,11 +72,12 @@
 
 ## Stage 6 — Події, rate limit, IDS
 Читати: SPEC §3.4 `[ratelimit]`, `[ids]`, `[events]`, §6, §9, §11; TESTING «Rate limit / IDS», «Події, API, notify», «Безпека».
-- [ ] `internal/events`: шина, ULID, seq, кільцевий буфер, sinks stdout/file(ротація)/syslog/webhook(батчі, ретраї, HMAC, overflow policy), `hash_accounts`, редагування значень `unicodePwd`/`userPassword` у фільтрах; `docs/events.schema.json` + тест валідації кожної події.
-- [ ] `internal/ratelimit`: IP/акаунт token bucket + вікна невдач, lock/unlock з подіями, негативний кеш, затримки, `constant_time_bind_fail`, `lock_response`, allowlists, tarpit, lockdown (ручний/авто).
-- [ ] `internal/ids`: spray, stuffing, slow_brute, enumeration, recon-сигнатури, baseline/anomaly (learn), fingerprint (TLS ClientHello hash + LDAP first-packet), `attack_start/summary/end`, `session_summary`.
-- [ ] `/v1/indicators` модель (score = зважена сума спрацювань з decay).
-- [ ] Метрики `internal/metrics`.
+- [x] `internal/events`: шина, ULID, seq, кільцевий буфер, sinks stdout/file(ротація)/syslog/webhook(батчі, ретраї, HMAC, overflow policy), `hash_accounts`, редагування значень `unicodePwd`/`userPassword` у фільтрах; `docs/events.schema.json` + тест валідації кожної події.
+- [x] `internal/ratelimit`: IP/акаунт token bucket + вікна невдач, lock/unlock з подіями, негативний кеш, затримки, `constant_time_bind_fail`, `lock_response`, allowlists, tarpit, lockdown (ручний/авто).
+- [x] `internal/ids`: spray, stuffing, slow_brute, enumeration, recon-сигнатури, baseline/anomaly (learn), fingerprint (TLS ClientHello hash + LDAP first-packet), `attack_start/summary/end`, `session_summary`.
+- [x] `/v1/indicators` модель (score = зважена сума спрацювань з decay).
+- [x] Метрики `internal/metrics`.
+- Закрито OPEN Stage 5: lock IP живе в `ratelimit.Limiter` (реалізує `vdir.Guard`), заблокований IP відсікається і на пошуку.
 **КП:** тести: 3 невдачі → lock → 4-та не йде в upstream (mock upstream рахує виклики); негативний кеш; spray-детектор на 5 акаунтах з одним хешем; recon на `(objectClass=*)` від кореня; anomaly new_ip після learn; webhook отримує батч з валідним HMAC; overflow drop_oldest; покриття `ratelimit`,`ids`,`events` ≥ 85%; тест `TestNoSecretsInOutput`.
 
 ## Stage 7 — API, метрики, IPC

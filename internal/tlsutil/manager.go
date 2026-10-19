@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/alstdev/aldap/internal/events"
+	"github.com/alstdev/aldap/internal/metrics"
 )
 
 // Modes of [tls].
@@ -45,6 +46,8 @@ type Options struct {
 	ExpiryAlertBefore time.Duration
 	// MinVersion is "1.2" or "1.3".
 	MinVersion string
+	// Metrics publishes cert_expiry_seconds (nil = none).
+	Metrics *metrics.Metrics
 	// ClientAuth is none, request or require; ClientCA verifies client certificates.
 	ClientAuth string
 	ClientCA   string
@@ -255,6 +258,7 @@ func (m *Manager) Config() *tls.Config {
 func (m *Manager) Check() {
 	leaf := m.Leaf()
 	now := m.now()
+	m.o.Metrics.SetCertExpiry(m.o.Profile, leaf.NotAfter)
 	if m.ca != nil && m.dueForRenewal(leaf) {
 		if err := m.reissue("renew"); err != nil {
 			m.log.Error("server certificate renewal failed", "err", err)

@@ -11,12 +11,16 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/alstdev/aldap/internal/config"
 	"github.com/alstdev/aldap/internal/events"
+	"github.com/alstdev/aldap/internal/ids"
 	"github.com/alstdev/aldap/internal/listener"
+	"github.com/alstdev/aldap/internal/metrics"
 	"github.com/alstdev/aldap/internal/profile"
+	"github.com/alstdev/aldap/internal/ratelimit"
 	"github.com/alstdev/aldap/internal/secret"
 	"github.com/alstdev/aldap/internal/tlsutil"
 	"github.com/alstdev/aldap/internal/upstream"
@@ -26,6 +30,57 @@ import (
 // certCheckInterval is how often server certificates are checked for
 // renewal and expiry.
 const certCheckInterval = time.Hour
+
+// sweepInterval is how often expired locks and attack timers are checked.
+const sweepInterval = time.Second
+
+// runtimeState is what survives a reload: the event bus (seq, ring buffer),
+// the rate-limit tables and the detector state. serve creates one per
+// process; tests may pass their own through daemonOptions.
+type runtimeState struct {
+	bus          *events.Bus
+	limiter      *ratelimit.Limiter
+	ids          *ids.Engine
+	metrics      *metrics.Metrics
+	lockdownAuto atomic.Bool
+}
+
+// newRuntimeState builds the process-wide state from the first configuration.
+func newRuntimeState(cfg *config.Config, log *slog.Logger, host string) (*runtimeState, error) {
+	m := metrics.New(version, commit, date)
+	bus, err := events.BusFromConfig(cfg.Events, events.Options{Host: host, Logger: log, Metrics: m})
+	if err != nil {
+		return nil, err
+	}
+	rs := &runtimeState{bus: bus, metrics: m}
+	rs.limiter = ratelimit.New(ratelimit.Options{Events: rs, Logger: log, Metrics: m})
+	rs.ids = ids.New(cfg.Intrusion, ids.Options{Events: rs, Logger: log, OnAttack: rs.onAttack, OnAttackEnd: rs.onAttackEnd, Metrics: m})
+	return rs, nil
+}
+
+// Emit implements events.Sink: every event reaches the bus and the
+// indicator scoring of the detectors.
+func (r *runtimeState) Emit(e events.Event) {
+	r.bus.Emit(e)
+	r.ids.Note(e)
+}
+
+// onAttack marks the sources for the tarpit and enters lockdown when
+// [ratelimit.lockdown].auto is set and the attack is high level.
+func (r *runtimeState) onAttack(a ids.Attack) {
+	for _, ip := range a.IPs {
+		r.limiter.SetAttack(ip, true)
+	}
+	if a.Level == events.LevelHigh && r.lockdownAuto.Load() {
+		r.limiter.SetLockdown(true, ratelimit.SourceIDs)
+	}
+}
+
+func (r *runtimeState) onAttackEnd(a ids.Attack) {
+	for _, ip := range a.IPs {
+		r.limiter.SetAttack(ip, false)
+	}
+}
 
 // daemonOptions tune a daemon build (tests inject writers and clocks).
 type daemonOptions struct {
@@ -39,6 +94,10 @@ type daemonOptions struct {
 	NoPersistCerts bool
 	// Hostname overrides os.Hostname for certificate SANs.
 	Hostname string
+	// EventsOut receives the stdout event sink (default os.Stdout).
+	EventsOut io.Writer
+	// State is the process-wide runtime state (nil = created by buildDaemon).
+	State *runtimeState
 }
 
 // daemon is one built configuration: upstreams, profiles and listeners.
@@ -51,7 +110,7 @@ type daemon struct {
 	upstreams map[string]*upstream.Upstream
 	profiles  []*servedProfile
 	global    *listener.Limiter
-	locks     *vdir.MemoryLocks
+	state     *runtimeState
 
 	mu       sync.Mutex
 	cancel   context.CancelFunc
@@ -103,8 +162,27 @@ func buildDaemon(cfg *config.Config, o daemonOptions) (*daemon, error) {
 	for _, w := range rep.Warnings {
 		log.Warn("configuration warning", "key", w.Path, "msg", w.Msg)
 	}
-	d := &daemon{cfg: cfg, log: log, events: events.Logger{Log: log}, opts: o, upstreams: map[string]*upstream.Upstream{},
-		global: listener.NewLimiter(cfg.Server.MaxConnections), locks: vdir.NewMemoryLocks()}
+	host := o.Hostname
+	if host == "" {
+		if h, err := os.Hostname(); err == nil {
+			host = h
+		}
+	}
+	state := o.State
+	if state == nil {
+		var err error
+		if state, err = newRuntimeState(cfg, log, host); err != nil {
+			return nil, err
+		}
+	} else {
+		state.ids.Reconfigure(cfg.Intrusion)
+	}
+	state.lockdownAuto.Store(cfg.Ratelimit.Lockdown.Auto)
+	if err := state.bus.Configure(cfg.Events, events.ConfigureOptions{Stdout: o.EventsOut, Secrets: o.Secrets, UserAgent: "aldap/" + version}); err != nil {
+		return nil, err
+	}
+	d := &daemon{cfg: cfg, log: log, events: state, opts: o, upstreams: map[string]*upstream.Upstream{},
+		global: listener.NewLimiter(cfg.Server.MaxConnections), state: state}
 	if err := d.buildUpstreams(); err != nil {
 		return nil, err
 	}
@@ -124,7 +202,7 @@ func (d *daemon) buildUpstreams() error {
 		for _, w := range warns {
 			d.log.Warn("secret warning", "key", "upstream."+name+".bind_password", "msg", w.Msg)
 		}
-		u, err := upstream.New(name, ucfg, pw.Reveal(), upstream.Options{Logger: d.log, Events: upstream.EventFunc(d.upstreamEvent)})
+		u, err := upstream.New(name, ucfg, pw.Reveal(), upstream.Options{Logger: d.log, Events: upstream.EventFunc(d.upstreamEvent), Metrics: d.state.metrics})
 		if err != nil {
 			return err
 		}
@@ -203,10 +281,18 @@ func (d *daemon) buildProfile(name string, pcfg *config.Profile) (*servedProfile
 	}
 	sp := &servedProfile{name: name, cfg: pcfg, addrs: pcfg.Listen}
 	offersStartTLS := pcfg.Transport == listener.TransportStartTLS || pcfg.Transport == listener.TransportLDAPStartTLS
+	guard, err := d.state.limiter.Policy(name, d.cfg.Ratelimit.With(pcfg.Ratelimit))
+	if err != nil {
+		return nil, fmt.Errorf("profile.%s: %w", name, err)
+	}
+	honeyLock := d.cfg.Intrusion.Honeytoken.LockDuration.D()
+	if !d.cfg.Intrusion.Honeytoken.Enabled {
+		honeyLock = 0
+	}
 	sp.dir = vdir.New(rules, up, vdir.Options{Logger: d.log, Events: d.events, Version: version, StartTLS: offersStartTLS,
-		Locks: d.locks, HoneytokenLock: d.cfg.Intrusion.Honeytoken.LockDuration.D()})
+		Guard: guard, Observer: d.state.ids, HoneytokenLock: honeyLock, Metrics: d.state.metrics})
 	lcfg := listener.Config{
-		Profile: name, Transport: pcfg.Transport, StartTLSRequired: pcfg.StartTLSRequired, Handler: sp.dir,
+		Profile: name, Transport: pcfg.Transport, StartTLSRequired: pcfg.StartTLSRequired, Handler: sp.dir, Fingerprints: d.state.ids, Metrics: d.state.metrics,
 		MaxRequestBytes: int64(pcfg.Limits.MaxRequestBytes), IdleTimeout: pcfg.Limits.IdleTimeout.D(),
 		PerIP: listener.NewIPLimiter(pcfg.Limits.MaxConnsPerIP), Global: d.global, Logger: d.log, Events: d.events,
 	}
@@ -302,7 +388,7 @@ func (d *daemon) buildTLS(name string, pcfg *config.Profile) (*tlsutil.Manager, 
 	m, err := tlsutil.New(tlsutil.Options{
 		Profile: name, Mode: t.Mode, CADir: t.CADir, AutoInit: t.AutoInit, Cert: t.Cert, Key: t.Key, KeyType: tlsutil.KeyType(t.KeyType),
 		SANs: certSANs(pcfg.Listen, t.SAN, hostname), AutoRenewBefore: t.AutoRenewBefore.D(), ExpiryAlertBefore: t.ExpiryAlertBefore.D(),
-		MinVersion: t.MinVersion, ClientAuth: t.ClientAuth, ClientCA: t.ClientCA, NoPersist: d.opts.NoPersistCerts,
+		MinVersion: t.MinVersion, ClientAuth: t.ClientAuth, ClientCA: t.ClientCA, NoPersist: d.opts.NoPersistCerts, Metrics: d.state.metrics,
 		Logger: d.log, Events: d.events,
 	})
 	if err != nil {
@@ -357,6 +443,11 @@ func (d *daemon) start(ctx context.Context) error {
 			}()
 		}
 	}
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.sweepLoop(ctx)
+	}()
 	d.events.Emit(events.Event{Event: events.Startup, Level: events.LevelLow, Data: map[string]any{"version": version, "profiles": names}})
 	d.log.Info("aldap started", "version", version, "profiles", names)
 	return nil
@@ -372,6 +463,25 @@ func (d *daemon) certLoop(ctx context.Context, m *tlsutil.Manager) {
 			return
 		case <-t.C:
 			m.Check()
+		}
+	}
+}
+
+// sweepLoop expires locks and drives the attack timers of the detectors.
+func (d *daemon) sweepLoop(ctx context.Context) {
+	t := time.NewTicker(sweepInterval)
+	defer t.Stop()
+	window := d.cfg.Ratelimit.IP.Window.D()
+	if w := d.cfg.Ratelimit.Account.Window.D(); w > window {
+		window = w
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			d.state.limiter.Sweep(now, window)
+			d.state.ids.Tick()
 		}
 	}
 }
@@ -434,6 +544,7 @@ func (d *daemon) stop() {
 			d.events.Emit(events.Event{Event: events.Shutdown, Level: events.LevelLow, Data: map[string]any{"version": version}})
 			d.log.Info("aldap stopped")
 		}
+		d.state.bus.Flush()
 	})
 }
 
