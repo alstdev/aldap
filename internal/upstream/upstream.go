@@ -144,6 +144,17 @@ func (u *Upstream) Start(ctx context.Context) {
 		u.log.Warn("tls_insecure_skip_verify is enabled: upstream certificates are not verified")
 		u.emit(Event{Kind: EventInsecureConfig, Level: "medium", Upstream: u.name, Data: map[string]any{"what": "tls_insecure_skip_verify"}})
 	}
+	if !u.cfg.StartTLS {
+		for _, s := range u.servers {
+			if !s.url.TLS() {
+				// SPEC §9: ldap:// without StartTLS sends the service password and
+				// every user password to the directory in clear text.
+				u.log.Warn("plain ldap:// to upstream without StartTLS: credentials cross the network unencrypted", "server", s.url.String())
+				u.emit(Event{Kind: EventInsecureConfig, Level: "medium", Upstream: u.name, Server: s.url.String(),
+					Data: map[string]any{"what": "plaintext_upstream", "server": s.url.String()}})
+			}
+		}
+	}
 	if u.cfg.AuditServiceAccount && u.cfg.BindDN != "" {
 		u.wg.Add(1)
 		go func() {

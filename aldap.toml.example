@@ -17,6 +17,7 @@ auto_init           = true         # create CA on first start if missing
 auto_renew_before   = "720h"
 expiry_alert_before = "336h"
 san                 = ["aldap.corp.local", "10.0.0.5"]
+key_type            = "ecdsa-p256" # ecdsa-p256 | rsa-2048
 min_version         = "1.2"
 client_auth         = "none"       # none | request | require
 # cert = "/etc/aldap/tls/server.crt"   # for mode = "external"
@@ -152,6 +153,7 @@ honeytoken_in_groups = true
 [profile.virola.client_bind]
 dn            = "cn=virola,ou=services,dc=aldap"
 password_file = "/run/secrets/virola_bind"
+# password_hash = "$argon2id$v=19$m=65536,t=3,p=4$..."   # alternative to password*
 
 [profile.virola.user_bind]
 allow              = true

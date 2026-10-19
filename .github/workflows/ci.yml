@@ -25,7 +25,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v8
         with: { version: latest }
       - run: go vet ./...
-      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - run: make vuln
       - run: make licenses
       - run: git diff --exit-code THIRD_PARTY_LICENSES.md
       - run: sudo apt-get install -y shellcheck && make shellcheck
@@ -73,6 +73,7 @@ jobs:
       - run: |
           go test -run=^$ -fuzz=FuzzParseFilter -fuzztime=10m ./internal/ldapfilter/
           go test -run=^$ -fuzz=FuzzParseDN -fuzztime=10m ./internal/ldapfilter/
+          go test -run=^$ -fuzz=FuzzParseMessage -fuzztime=10m ./internal/listener/
 
   samba:
     if: github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')

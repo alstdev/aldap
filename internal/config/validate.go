@@ -268,6 +268,7 @@ func (v Validator) validateTLS(path string, t *TLS, listenHosts []string, rep *R
 			}
 		}
 	}
+	oneOf(rep, path+".key_type", t.KeyType, "ecdsa-p256", "rsa-2048")
 	oneOf(rep, path+".min_version", t.MinVersion, "1.2", "1.3")
 	if oneOf(rep, path+".client_auth", t.ClientAuth, "none", "request", "require") && t.ClientAuth != "none" && t.ClientCA == "" {
 		rep.errorf(path+".client_ca", "required for client_auth = %s", t.ClientAuth)
@@ -573,10 +574,18 @@ func (v Validator) validateProfileBind(path string, p *Profile, rep *Report) {
 	cb := p.ClientBind
 	if cb.DN != "" {
 		v.checkDN(rep, path+".client_bind.dn", cb.DN)
-	} else if cb.PasswordSource().IsSet() {
+	} else if cb.PasswordSource().IsSet() || cb.PasswordHash != "" {
 		rep.errorf(path+".client_bind.dn", "required when client_bind.password is set")
 	}
-	v.checkSecret(rep, path+".client_bind.password", cb.PasswordSource(), cb.DN != "")
+	if cb.PasswordHash != "" {
+		if cb.PasswordSource().IsSet() {
+			rep.errorf(path+".client_bind.password_hash", "mutually exclusive with password, password_file and password_env")
+		}
+		if !strings.HasPrefix(cb.PasswordHash, "$argon2id$") {
+			rep.errorf(path+".client_bind.password_hash", "must be an argon2id PHC string ($argon2id$v=19$m=...,t=...,p=...$salt$hash)")
+		}
+	}
+	v.checkSecret(rep, path+".client_bind.password", cb.PasswordSource(), cb.DN != "" && cb.PasswordHash == "")
 	if p.AnonymousBind {
 		rep.warnf(path+".anonymous_bind", "anonymous bind is enabled")
 	}
@@ -637,6 +646,9 @@ func (v Validator) checkFilter(rep *Report, path, f string) {
 func (v Validator) validateTLSOverride(path string, t *TLSOverride, rep *Report) {
 	if t.Mode != nil {
 		oneOf(rep, path+".mode", *t.Mode, "builtin-ca", "external")
+	}
+	if t.KeyType != nil {
+		oneOf(rep, path+".key_type", *t.KeyType, "ecdsa-p256", "rsa-2048")
 	}
 	if t.MinVersion != nil {
 		oneOf(rep, path+".min_version", *t.MinVersion, "1.2", "1.3")

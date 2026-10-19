@@ -14,7 +14,7 @@ IMAGE="${IMAGE:-aldap/aldap}"
 VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo none)"
 DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-GO_MINOR="$(sed -n 's/^go \([0-9]*\.[0-9]*\).*/\1/p' go.mod 2>/dev/null || echo 1.25)"
+GO_MINOR="$(sed -n 's/^go \([0-9]*\.[0-9]*\).*/\1/p' go.mod 2>/dev/null || echo 1.26)"
 
 # DHI tags: verify current tags in https://hub.docker.com/hardened-images/catalog/ (golang, static)
 DHI_GOLANG_TAG="${DHI_GOLANG_TAG:-${GO_MINOR}-debian13-dev}"

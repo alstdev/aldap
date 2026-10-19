@@ -47,13 +47,14 @@
 
 ## Stage 4 — Listener і базовий проксі (без віртуалізації)
 Читати: SPEC §3.4 `[server]`, `[tls]`, `[profile.<name>]`, §4.2, §4.3, §9, §12; TESTING «Транспорт», «Bind», «Сумісність».
-- [ ] `internal/listener` на gldap: `ldap`/`starttls`/`ldaps`/`ldap+starttls`, `starttls_required`, ліміти з'єднань (глобально/на IP), idle timeout, read deadline, `max_request_bytes`.
-- [ ] Маршрутизація → профіль; RootDSE; `cn=Subschema` мінімальний.
-- [ ] Bind: anonymous/client/user (нормалізація UPN/`DOMAIN\u`/sAM/virtual DN), прокидання в upstream, обнулення паролів у пам'яті.
-- [ ] Search прохідний: валідація base/scope, AND з `filter`, allowlist атрибутів, map, злиття кількох `bases`, дедуплікація по objectGUID/DN, sizeLimit, paged results до клієнта.
-- [ ] Усі write-операції/extended → `unwillingToPerform` + `op_denied`; Compare → `compareFalse` + `op_denied` (compare заборонено, бо дозволяє enumeration).
-- [ ] `internal/tlsutil`: вбудований CA (`gen-ca`), серверний сертифікат з SAN, auto-init, auto-renew, `cert_expiring`.
-- [ ] `aldap run` з graceful shutdown, SIGHUP reload (поки без hot-swap listener'ів допустимо повний перезапуск listener'ів).
+- [x] `internal/listener` (власний BER-фронтенд на `go-asn1-ber`, див. DECISIONS; gldap лишається для testdir): `ldap`/`starttls`/`ldaps`/`ldap+starttls`, `starttls_required`, ліміти з'єднань (глобально/на IP), idle timeout, read deadline, `max_request_bytes`.
+- [x] Маршрутизація → профіль; RootDSE; `cn=Subschema` мінімальний.
+- [x] Bind: anonymous/client/user (нормалізація UPN/`DOMAIN\u`/sAM/virtual DN), прокидання в upstream, обнулення паролів у пам'яті.
+- [x] Search прохідний: валідація base/scope, AND з `filter`, allowlist атрибутів, map, злиття кількох `bases`, дедуплікація по objectGUID/DN, sizeLimit, paged results до клієнта.
+- [x] Усі write-операції/extended → `unwillingToPerform` + `op_denied`; Compare → `compareFalse` + `op_denied` (compare заборонено, бо дозволяє enumeration).
+- [x] `internal/tlsutil`: вбудований CA (`gen-ca`), серверний сертифікат з SAN, auto-init, auto-renew, `cert_expiring`.
+- [x] `aldap run` з graceful shutdown, SIGHUP reload (поки без hot-swap listener'ів допустимо повний перезапуск listener'ів).
+- OPEN: `mode = honeypot|mock` пропускаються з WARN до відповідних етапів; Python `ldap3` — у Stage 5 (потрібен `memberOf`).
 **КП:** e2e з `ldapsearch -x -ZZ`, `ldaps://`, `-E pr=100/noprompt` проти ALDAP→testdir; тест «запит з `telephoneNumber` поза allow → атрибут відсутній, пошук по ньому → 0 результатів без помилки»; TLS-термінація: клієнт ldaps, upstream ldap.
 
 ## Stage 5 — Віртуальний каталог

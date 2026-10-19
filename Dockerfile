@@ -4,8 +4,8 @@
 #   plain — public golang + scratch (local tests): docker build --target plain .
 # Verify DHI tags in https://hub.docker.com/hardened-images/catalog/ ; `docker login dhi.io` is required.
 
-ARG GO_MINOR=1.25
-ARG DHI_GOLANG_TAG=1.25-debian13-dev
+ARG GO_MINOR=1.26
+ARG DHI_GOLANG_TAG=1.26-debian13-dev
 ARG DHI_STATIC_TAG=latest
 
 # ---------- build stage: DHI ----------

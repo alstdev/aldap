@@ -14,7 +14,9 @@ PLATFORMS   := linux/amd64 linux/arm64 windows/amd64
 COVER_MIN   ?= 80
 
 GOLANGCI    := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-GOVULN      := go run golang.org/x/vuln/cmd/govulncheck@latest
+# govulncheck is pinned (docs/DECISIONS.md); v1.8.0+ requires Go >= 1.26.
+GOVULN_VERSION ?= v1.9.0
+GOVULN      := go run golang.org/x/vuln/cmd/govulncheck@$(GOVULN_VERSION)
 GOLICENSES  := go run github.com/google/go-licenses@latest
 GOTESTSUM   := go run gotest.tools/gotestsum@latest
 
@@ -66,6 +68,7 @@ integration-samba: ## Integration tests against Samba AD DC in Docker
 fuzz: ## Fuzz parsers for 2 minutes each
 	go test -run=^$$ -fuzz=FuzzParseFilter -fuzztime=2m ./internal/ldapfilter/
 	go test -run=^$$ -fuzz=FuzzParseDN -fuzztime=2m ./internal/ldapfilter/
+	go test -run=^$$ -fuzz=FuzzParseMessage -fuzztime=2m ./internal/listener/
 
 .PHONY: lint
 lint: ## golangci-lint

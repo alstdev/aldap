@@ -17,7 +17,7 @@ ALDAP is licensed under MIT. The following dependencies are distributed with the
 | github.com/mattn/go-isatty | MIT | https://github.com/mattn/go-isatty/blob/v0.0.20/LICENSE |
 | github.com/pmezard/go-difflib/difflib | BSD-3-Clause | https://github.com/pmezard/go-difflib/blob/v1.0.0/LICENSE |
 | github.com/stretchr/testify | MIT | https://github.com/stretchr/testify/blob/v1.9.0/LICENSE |
-| golang.org/x/crypto/md4 | BSD-3-Clause | https://cs.opensource.google/go/x/crypto/+/v0.54.0:LICENSE |
-| golang.org/x/sys/unix | BSD-3-Clause | https://cs.opensource.google/go/x/sys/+/v0.47.0:LICENSE |
+| golang.org/x/crypto | BSD-3-Clause | https://cs.opensource.google/go/x/crypto/+/v0.54.0:LICENSE |
+| golang.org/x/sys | BSD-3-Clause | https://cs.opensource.google/go/x/sys/+/v0.47.0:LICENSE |
 | gopkg.in/yaml.v3 | MIT | https://github.com/go-yaml/yaml/blob/v3.0.1/LICENSE |
 
