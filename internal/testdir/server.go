@@ -114,6 +114,9 @@ type Server struct {
 	rootDSE   atomic.Int64
 	delayNano atomic.Int64
 	stopped   atomic.Bool
+	// backOpen counts connections opened to the gldap backend whose close
+	// hook has not run yet (see Stop).
+	backOpen atomic.Int64
 }
 
 // Start runs a server and registers Stop with t.Cleanup.
@@ -213,11 +216,13 @@ func (s *Server) startBackend() error {
 	go func() { _ = srv.Run(s.backAddr, runOpts...) }()
 	for i := 0; i < 200; i++ {
 		if srv.Ready() {
+			s.backOpen.Add(1)
 			c, err := dialTimeout(s.backAddr, 50*time.Millisecond)
 			if err == nil {
 				_ = c.Close()
 				return nil
 			}
+			s.backOpen.Add(-1)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -246,8 +251,10 @@ func (s *Server) serveFront(ln net.Listener) {
 
 func (s *Server) pipe(front net.Conn) {
 	defer s.wg.Done()
+	s.backOpen.Add(1)
 	back, err := dialTimeout(s.backAddr, 2*time.Second)
 	if err != nil {
+		s.backOpen.Add(-1)
 		_ = front.Close()
 		return
 	}
@@ -335,6 +342,15 @@ func (s *Server) Stop() {
 	}
 	s.Kill()
 	s.wg.Wait()
+	// gldap's Stop waits on its connection WaitGroup, whose Add runs in the
+	// accept loop; the race detector reports that Add against our Wait unless
+	// every connection we opened has already been closed by the backend
+	// (its close hook decrements backOpen). Poll the state with a deadline
+	// instead of sleeping a fixed time.
+	deadline := time.Now().Add(5 * time.Second)
+	for s.backOpen.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	_ = s.backend.Stop()
 }
 
@@ -397,6 +413,7 @@ func (s *Server) sleep() {
 }
 
 func (s *Server) onClose(connID int) {
+	s.backOpen.Add(-1)
 	s.boundMu.Lock()
 	delete(s.bound, connID)
 	s.boundMu.Unlock()

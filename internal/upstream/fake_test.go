@@ -1,12 +1,14 @@
 package upstream
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -246,6 +248,29 @@ func newFake(t *testing.T, cfg *config.Upstream, sizes ...int) (*Upstream, []*fa
 	}
 	t.Cleanup(u.Close)
 	return u, fss, ev
+}
+
+// logCapture collects slog output so tests can wait for a log line instead
+// of sleeping.
+type logCapture struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *logCapture) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *logCapture) contains(sub string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Contains(l.buf.String(), sub)
+}
+
+func (l *logCapture) logger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(l, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
 
 func waitFor(t *testing.T, what string, cond func() bool) {

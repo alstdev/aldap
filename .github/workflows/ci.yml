@@ -9,6 +9,9 @@ on:
   schedule:
     - cron: "17 3 * * *"
 
+# Runner pinned to ubuntu-24.04 while ubuntu-latest migrates to Ubuntu 26
+# (docs/DECISIONS.md 2026-10-19); setup-go@v6 installs the go.mod `toolchain`
+# version, so GOTOOLCHAIN never downloads a second toolchain into the cache.
 permissions:
   contents: read
 
@@ -17,10 +20,10 @@ env:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod, cache: true }
       - uses: golangci/golangci-lint-action@v8
         with: { version: latest }
@@ -31,10 +34,10 @@ jobs:
       - run: sudo apt-get install -y shellcheck && make shellcheck
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod, cache: true }
       - run: sudo apt-get update && sudo apt-get install -y ldap-utils
       - run: python3 -m pip install --user ldap3   # TESTING.md 48 (TestDaemon_Ldap3 skips without it)
@@ -46,18 +49,18 @@ jobs:
         with: { name: test-artifacts, path: artifacts/ }
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [lint, test]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod, cache: true }
       - run: make build
       - uses: actions/upload-artifact@v4
         with: { name: binaries, path: dist/ }
 
   docker-plain:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [lint, test]
     steps:
       - uses: actions/checkout@v4
@@ -66,10 +69,10 @@ jobs:
 
   fuzz:
     if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod, cache: true }
       - run: |
           go test -run=^$ -fuzz=FuzzParseFilter -fuzztime=10m ./internal/ldapfilter/
@@ -78,7 +81,7 @@ jobs:
 
   samba:
     if: github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       # The Samba AD test bench arrives with Stage 13; until deploy/samba-dc/compose.yml
@@ -86,7 +89,7 @@ jobs:
       - id: bench
         run: echo "present=${{ hashFiles('deploy/samba-dc/compose.yml') != '' }}" >> "$GITHUB_OUTPUT"
       - if: steps.bench.outputs.present == 'true'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with: { go-version-file: go.mod, cache: true }
       - if: steps.bench.outputs.present == 'true'
         run: make integration-samba
@@ -98,7 +101,7 @@ jobs:
 
   docker-dhi:
     if: github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [lint, test]
     env:
       DHI_USERNAME: ${{ secrets.DHI_USERNAME }}
@@ -121,7 +124,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [build, docker-plain]
     permissions:
       contents: write

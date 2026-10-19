@@ -3,6 +3,7 @@
 package upstream_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -84,6 +85,36 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timeout waiting for %s", what)
 }
 
+// clientSearches counts the searches a server answered for clients: health
+// probes read only the root DSE, so they are excluded.
+func clientSearches(s *testdir.Server) int64 {
+	c := s.Calls()
+	return c.Searches - c.RootDSE
+}
+
+// logCapture collects slog output so tests can wait for a log line instead
+// of sleeping.
+type logCapture struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *logCapture) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *logCapture) contains(sub string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Contains(l.buf.String(), sub)
+}
+
+func (l *logCapture) logger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(l, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
 func filter(t *testing.T, s string) *ldapfilter.Filter {
 	t.Helper()
 	f, err := ldapfilter.Parse(s)
@@ -119,14 +150,14 @@ func TestIntegration_FailoverAndReturnToPrimary(t *testing.T) {
 	if st := u.Status(); st[0].State != upstream.StateDown || st[0].LastError == "" || st[1].State != upstream.StateUp {
 		t.Fatalf("status after kill: %+v", st)
 	}
-	before := dc2.Calls().Searches
+	before := clientSearches(dc2)
 	for i := 0; i < 3; i++ {
 		if res, err := u.Search(ctx, req); err != nil || res.Server != dc2.URL() {
 			t.Fatalf("search while dc1 down: %+v %v", res, err)
 		}
 	}
-	if dc2.Calls().Searches-before != 3 {
-		t.Fatal("searches did not all go to dc2")
+	if got := clientSearches(dc2) - before; got != 3 {
+		t.Fatalf("client searches on dc2 = %d, want 3", got)
 	}
 	if err := dc1.Restart(); err != nil {
 		t.Fatal(err)
@@ -353,13 +384,22 @@ func TestIntegration_AuditAndCheck(t *testing.T) {
 	t.Run("read_only_account", func(t *testing.T) {
 		cfg := cfgFor(dc)
 		cfg.AuditServiceAccount = true
-		u, ev := newUpstream(t, cfg)
+		ev := &sink{}
+		logs := &logCapture{}
+		u, err := upstream.New("ad-test", cfg, svcPW, upstream.Options{Events: ev, Logger: logs.logger()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(u.Close)
 		groups, err := u.AuditServiceAccount(ctx)
 		if err != nil || len(groups) != 0 {
 			t.Fatalf("audit: %v %v", groups, err)
 		}
 		u.Start(ctx)
-		time.Sleep(100 * time.Millisecond)
+		// The audit logs its verdict after deciding whether to emit the event.
+		waitFor(t, "audit passed", func() bool { return logs.contains("service account audit passed") })
+		ev.mu.Lock()
+		defer ev.mu.Unlock()
 		for _, e := range ev.events {
 			if e.Kind == upstream.EventInsecureConfig && e.Data["what"] == "service_account_admin" {
 				t.Fatal("clean account flagged")

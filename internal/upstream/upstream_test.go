@@ -726,8 +726,11 @@ func TestAudit_Cases(t *testing.T) {
 	}
 	cfg2.AuditServiceAccount = true
 	u2.cfg.AuditServiceAccount = true
+	logs2 := &logCapture{}
+	u2.log = logs2.logger()
 	u2.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
+	// The verdict is logged after the event decision, so no event can follow it.
+	waitFor(t, "audit passed", func() bool { return logs2.contains("service account audit passed") })
 	if countWhat(ev2, "service_account_admin") != 0 {
 		t.Fatal("clean account reported")
 	}
@@ -746,9 +749,11 @@ func TestAudit_Cases(t *testing.T) {
 		t.Fatal("dead server audited")
 	}
 	u4.cfg.AuditServiceAccount = true
+	logs4 := &logCapture{}
+	u4.log = logs4.logger()
 	actx, acancel := context.WithCancel(ctx)
 	u4.Start(actx)
-	time.Sleep(30 * time.Millisecond)
+	waitFor(t, "audit postponed", func() bool { return logs4.contains("service account audit postponed") })
 	acancel()
 	u4.Close()
 	// Insecure TLS emits insecure_config on Start.
