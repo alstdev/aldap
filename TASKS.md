@@ -54,18 +54,20 @@
 - [x] Усі write-операції/extended → `unwillingToPerform` + `op_denied`; Compare → `compareFalse` + `op_denied` (compare заборонено, бо дозволяє enumeration).
 - [x] `internal/tlsutil`: вбудований CA (`gen-ca`), серверний сертифікат з SAN, auto-init, auto-renew, `cert_expiring`.
 - [x] `aldap run` з graceful shutdown, SIGHUP reload (поки без hot-swap listener'ів допустимо повний перезапуск listener'ів).
-- OPEN: `mode = honeypot|mock` пропускаються з WARN до відповідних етапів; Python `ldap3` — у Stage 5 (потрібен `memberOf`).
+- [x] (закрито у Stage 5) `mode = honeypot|mock` обслуговуються; Python `ldap3` — `TestDaemon_Ldap3`.
 **КП:** e2e з `ldapsearch -x -ZZ`, `ldaps://`, `-E pr=100/noprompt` проти ALDAP→testdir; тест «запит з `telephoneNumber` поза allow → атрибут відсутній, пошук по ньому → 0 результатів без помилки»; TLS-термінація: клієнт ldaps, upstream ldap.
 
 ## Stage 5 — Віртуальний каталог
 Читати: SPEC §4 (4.1–4.6), §3.4 `[profile.<name>]`; TESTING «Віртуальна база», «Bind».
-- [ ] `internal/vdir`: `virtual_base`, `ou=users`/`ou=groups`, переписування DN в обидва боки, `rdn_attr`, колізії RDN.
-- [ ] `attrs.computed` (шаблони + функції), `attrs.mask`, `objectclass.map`, пост-фільтрація по computed.
-- [ ] Віртуальні групи (§4.4): bases+filter ∪ ad_groups ∪ include − exclude ∩ profile.filter; `member`/`memberOf`; пошук по `(member=)`/`(memberOf=)`; `groupOfNames`/`group`/`posixGroup`.
-- [ ] Nested groups: AD через `LDAP_MATCHING_RULE_IN_CHAIN`, generic — рекурсія з лімітом.
-- [ ] Honeytokens (§4.5), `mode=honeypot`, `mode=mock` (TOML/CSV).
-- [ ] `user_bind.require_membership`.
-- [ ] `aldap check --profile X --as-client`, `POST /v1/profiles/{x}/test` (API пізніше, зараз — внутрішня функція).
+- [x] `internal/vdir`: `virtual_base`, `ou=users`/`ou=groups`, переписування DN в обидва боки, `rdn_attr`, колізії RDN.
+- [x] `attrs.computed` (шаблони + функції), `attrs.mask`, `objectclass.map`, пост-фільтрація по computed.
+- [x] Віртуальні групи (§4.4): bases+filter ∪ ad_groups ∪ include − exclude ∩ profile.filter; `member`/`memberOf`; пошук по `(member=)`/`(memberOf=)`; `groupOfNames`/`group`/`posixGroup`.
+- [x] Nested groups: AD через `LDAP_MATCHING_RULE_IN_CHAIN`, generic — рекурсія з лімітом.
+- [x] Honeytokens (§4.5), `mode=honeypot`, `mode=mock` (TOML/CSV).
+- [x] `user_bind.require_membership`.
+- [x] `aldap check --profile X --as-client`, `POST /v1/profiles/{x}/test` (API пізніше, зараз — внутрішня функція `vdir.Directory.Test`).
+- [x] Python `ldap3`-тест (перенесений зі Stage 4): `TestDaemon_Ldap3` — локальний `python3`+`ldap3` (CI), інакше Docker `python:3-slim`, інакше skip.
+- OPEN: lock IP за honeytoken зберігається в `vdir.MemoryLocks` до появи rate limiter (Stage 6); пошуки з заблокованого IP не блокуються (DECISIONS).
 **КП:** інтеграційні тести: Virola-сценарій (два bases, computer виключено, група `virola-users` зі всіма, user bind UPN, `memberOf` у користувача); колізія RDN; computed mail; mask телефону; honeytoken bind → lock; покриття `vdir` ≥ 85%.
 
 ## Stage 6 — Події, rate limit, IDS

@@ -23,12 +23,21 @@ var invalidCredentials = listener.Result{Code: ldap.LDAPResultInvalidCredentials
 func (d *Directory) Bind(ctx context.Context, c *listener.Conn, name string, password []byte) listener.Result {
 	start := d.now()
 	b := &bindCtx{conn: c, name: name, start: start}
+	if d.ipLocked(c) {
+		ev := c.Event(events.BindBlocked, events.LevelMedium)
+		ev.Account = strings.TrimSpace(name)
+		ev.Reason = "ip_locked"
+		ev.Data = map[string]any{"reason": "ip_locked"}
+		d.ev.Emit(ev)
+		d.log.Info("bind blocked", "conn_id", c.ID(), "client_ip", c.ClientIP(), "reason", "ip_locked")
+		return invalidCredentials
+	}
 	res := d.bind(ctx, b, password)
 	if res.Code == ldap.LDAPResultSuccess {
 		c.SetBound(listener.Bound{Kind: b.kind, Name: name, UpstreamDN: b.upstreamDN})
 		ev := c.Event(events.BindOK, events.LevelLow)
 		ev.Account = b.account
-		ev.Upstream, ev.UpstreamServer = d.up.Name(), b.server
+		ev.Upstream, ev.UpstreamServer = d.upstreamName(), b.server
 		ev.Duration = d.now().Sub(start)
 		ev.Data = map[string]any{"bind_kind": string(b.kind)}
 		if b.upstreamDN != "" {
@@ -45,7 +54,7 @@ func (d *Directory) Bind(ctx context.Context, c *listener.Conn, name string, pas
 	ev := c.Event(events.BindFail, level)
 	ev.Account = b.account
 	ev.Reason = string(b.reason)
-	ev.Upstream, ev.UpstreamServer = d.up.Name(), b.server
+	ev.Upstream, ev.UpstreamServer = d.upstreamName(), b.server
 	ev.Duration = d.now().Sub(start)
 	ev.Data = map[string]any{"bind_kind": string(b.kind), "form": string(b.form)}
 	if b.data != "" {
@@ -70,26 +79,32 @@ type bindCtx struct {
 	server     string
 }
 
+// anonymousBind handles empty names or passwords: an anonymous bind is
+// accepted only with anonymous_bind = true; a name without a password is
+// an unauthenticated bind (RFC 4513 §5.1.2), refused like anonymous.
+func (d *Directory) anonymousBind(b *bindCtx, name string, password []byte) (listener.Result, bool) {
+	if name != "" && len(password) > 0 {
+		return listener.Result{}, false
+	}
+	b.kind = listener.BindAnonymous
+	if name == "" && len(password) == 0 && d.rules.AnonymousBind {
+		return listener.Success, true
+	}
+	b.reason = upstream.ReasonAnonymous
+	return invalidCredentials, true
+}
+
 func (d *Directory) bind(ctx context.Context, b *bindCtx, password []byte) listener.Result {
 	name := strings.TrimSpace(b.name)
 	b.account = name
-	switch {
-	case name == "" && len(password) == 0:
-		b.kind = listener.BindAnonymous
-		if d.rules.AnonymousBind {
-			return listener.Success
-		}
-		b.reason = upstream.ReasonAnonymous
-		return invalidCredentials
-	case len(password) == 0:
-		// Unauthenticated bind (RFC 4513 §5.1.2): a name without a password is
-		// anonymous in disguise and is refused.
-		b.kind = listener.BindAnonymous
-		b.reason = upstream.ReasonAnonymous
-		return invalidCredentials
-	case name == "":
-		b.kind = listener.BindAnonymous
-		b.reason = upstream.ReasonAnonymous
+	if res, done := d.anonymousBind(b, name, password); done {
+		return res
+	}
+	if d.rules.Mode == "honeypot" {
+		// The whole profile is a trap (SPEC §4.5): every bind is a hit.
+		b.kind = listener.BindUser
+		b.reason = upstream.ReasonUnknownAccount
+		d.honeytokenHit(b.conn, "bind", name)
 		return invalidCredentials
 	}
 	if dn, err := ldapfilter.ParseDN(name); err == nil && d.rules.IsClientBindDN(dn) {
@@ -107,6 +122,15 @@ func (d *Directory) bind(ctx context.Context, b *bindCtx, password []byte) liste
 	}
 	bn := d.rules.NormalizeBindName(name)
 	b.form, b.account = bn.Form, bn.Account
+	if h := d.rules.MatchHoneytoken(bn.Account); h != nil && bn.Form != profile.FormOtherDN {
+		b.reason = upstream.ReasonUnknownAccount
+		d.honeytokenHit(b.conn, "bind", h.Account)
+		return invalidCredentials
+	}
+	if d.up == nil {
+		b.reason = upstream.ReasonUnknownAccount
+		return invalidCredentials
+	}
 	var realDN string
 	switch bn.Form {
 	case profile.FormOtherDN:

@@ -371,17 +371,21 @@ func TestDaemon_BuildErrors(t *testing.T) {
 		t.Errorf("missing client secret: %v", err)
 	}
 	t.Setenv("ALDAP_TEST_CLIENT_PW", clientPassword)
-	// honeypot profile is skipped with a warning; a configuration with no proxy profile fails.
+	// honeypot profile is served (with a warning); a mock profile needs a readable file.
 	logs := &safeBuffer{}
 	path, _, _ = daemonConfig(t, dc, caDir, "[profile.honey]\nlisten = [\"127.0.0.1:1389\"]\ntransport = \"ldap\"\nupstream = \"ad\"\nmode = \"honeypot\"\nvirtual_base = \"dc=honey\"\n")
 	d, err := loadDaemon(path, true, daemonOptions{LogOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true})
 	if err != nil {
 		t.Fatalf("honeypot config: %v", err)
 	}
-	if len(d.profiles) != 2 || !strings.Contains(logs.String(), "profile mode not implemented") {
+	if len(d.profiles) != 3 || !strings.Contains(logs.String(), "honeypot profile") {
 		t.Errorf("honeypot handling: %d profiles\n%s", len(d.profiles), logs.String())
 	}
 	d.stop()
+	path, _, _ = daemonConfig(t, dc, caDir, "[profile.mock]\nlisten = [\"127.0.0.1:1390\"]\ntransport = \"ldap\"\nmode = \"mock\"\nvirtual_base = \"dc=mock\"\n[profile.mock.mock]\nfile = \"/nonexistent/mock.toml\"\n[profile.mock.attrs]\nallow = [\"cn\"]\n")
+	if _, err := loadDaemon(path, true, daemonOptions{LogOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true}); err == nil || !strings.Contains(err.Error(), "mock.file") {
+		t.Errorf("mock file missing: %v", err)
+	}
 	// Port already in use → start fails and cleans up.
 	path, lp, _ := daemonConfig(t, dc, caDir, "")
 	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", fmt.Sprintf("127.0.0.1:%d", lp))

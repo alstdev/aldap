@@ -20,7 +20,8 @@ import (
 	"github.com/alstdev/aldap/internal/upstream"
 )
 
-// Searcher is the part of *upstream.Upstream the directory uses.
+// Searcher is the part of *upstream.Upstream the directory uses; *Mock
+// implements it for mode = mock.
 type Searcher interface {
 	Name() string
 	Search(ctx context.Context, req upstream.SearchRequest) (*upstream.Result, error)
@@ -37,10 +38,15 @@ type Options struct {
 	StartTLS bool
 	// MaxPagingStates bounds the paged-results cursors kept per connection (0 = 8).
 	MaxPagingStates int
-	Now             func() time.Time
+	// Locks records honeytoken IP locks (nil = a private MemoryLocks).
+	Locks Locker
+	// HoneytokenLock is the IP lock applied on a honeytoken hit (0 = 24h).
+	HoneytokenLock time.Duration
+	Now            func() time.Time
 }
 
-// Directory serves one profile. It implements listener.Handler.
+// Directory serves one profile. It implements listener.Handler. up is nil
+// for mode = honeypot (no upstream at all).
 type Directory struct {
 	rules *profile.Rules
 	up    Searcher
@@ -48,11 +54,14 @@ type Directory struct {
 	ev    events.Sink
 	o     Options
 	now   func() time.Time
+
+	memMu sync.Mutex
+	mem   *membership
 }
 
 var _ listener.Handler = (*Directory)(nil)
 
-// New builds the directory of a profile over its upstream.
+// New builds the directory of a profile over its upstream (nil for honeypot).
 func New(rules *profile.Rules, up Searcher, o Options) *Directory {
 	d := &Directory{rules: rules, up: up, log: o.Logger, ev: o.Events, o: o, now: o.Now}
 	if d.log == nil {
@@ -68,11 +77,27 @@ func New(rules *profile.Rules, up Searcher, o Options) *Directory {
 	if d.o.MaxPagingStates <= 0 {
 		d.o.MaxPagingStates = 8
 	}
+	if d.o.Locks == nil {
+		d.o.Locks = NewMemoryLocks()
+	}
+	if d.o.HoneytokenLock <= 0 {
+		d.o.HoneytokenLock = 24 * time.Hour
+	}
+	if rules.Mode == "honeypot" {
+		d.up = nil
+	}
 	return d
 }
 
 // Rules returns the compiled profile rules.
 func (d *Directory) Rules() *profile.Rules { return d.rules }
+
+func (d *Directory) upstreamName() string {
+	if d.up == nil {
+		return ""
+	}
+	return d.up.Name()
+}
 
 // Attributes always fetched from the upstream for internal use.
 const (
@@ -88,6 +113,10 @@ type searchCtx struct {
 	req    *listener.SearchRequest
 	start  time.Time
 	filter *ldapfilter.Filter
+	// post is the part of the filter evaluated on the transformed entries
+	// (nil = none); upstream is the filter sent to the directory.
+	post     *ldapfilter.Filter
+	upstream *ldapfilter.Filter
 	// want are the requested client attributes (lower-case); all means "*" or none.
 	want    map[string]bool
 	all     bool
@@ -95,6 +124,7 @@ type searchCtx struct {
 	terms   []string
 	queries int
 	server  string
+	trap    string // honeytoken account targeted, "" when none
 }
 
 // Search answers a client search (SPEC §4.2). A paged request with a
@@ -137,7 +167,7 @@ func (d *Directory) Search(ctx context.Context, c *listener.Conn, req *listener.
 // result (before paging).
 func (d *Directory) search(ctx context.Context, sc *searchCtx) (listener.Result, []listener.Entry) {
 	req := sc.req
-	f, err := ldapfilter.ParseWithLimits(req.Filter, ldapfilter.Limits{MaxDepth: sc.limits(d).MaxFilterDepth, MaxLen: sc.limits(d).MaxFilterLen})
+	f, err := ldapfilter.ParseWithLimits(req.Filter, ldapfilter.Limits{MaxDepth: d.rules.Limits.MaxFilterDepth, MaxLen: d.rules.Limits.MaxFilterLen})
 	if err != nil {
 		if errors.Is(err, ldapfilter.ErrTooDeep) || errors.Is(err, ldapfilter.ErrTooLong) {
 			return listener.Result{Code: ldap.LDAPResultAdminLimitExceeded, Diagnostic: "filter too complex"}, nil
@@ -150,6 +180,7 @@ func (d *Directory) search(ctx context.Context, sc *searchCtx) (listener.Result,
 	if err != nil || kind == profile.BaseOutside {
 		return listener.Result{Code: ldap.LDAPResultNoSuchObject}, nil
 	}
+	d.detectTrap(sc, kind, rdn)
 	out, res := d.entriesFor(ctx, sc, kind, rdn)
 	if res.Code != ldap.LDAPResultSuccess {
 		return res, nil
@@ -160,65 +191,95 @@ func (d *Directory) search(ctx context.Context, sc *searchCtx) (listener.Result,
 	return d.sizeLimit(sc, out)
 }
 
-// entriesFor serves the entries of one base kind (SPEC §4.2 step 2).
-func (d *Directory) entriesFor(ctx context.Context, sc *searchCtx, kind profile.BaseKind, rdn string) ([]listener.Entry, listener.Result) {
-	req := sc.req
-	var out []listener.Entry
-	switch kind {
-	case profile.BaseRootDSE:
-		if req.Scope == listener.ScopeBase {
-			out = d.static(sc, rootDSE(d.rules, d.o.Version, d.o.StartTLS))
-		}
-	case profile.BaseSubschema:
-		if req.Scope == listener.ScopeBase {
-			out = d.static(sc, subschema(d.rules))
-		}
-	case profile.BaseVirtual:
-		switch req.Scope {
-		case listener.ScopeBase:
-			out = d.static(sc, containerEntry(d.rules.VirtualBase, "ALDAP virtual directory"))
-		case listener.ScopeOne:
-			out = d.static(sc, containerEntry(d.rules.UsersBase, "Users"), containerEntry(d.rules.GroupsBase, "Virtual groups"))
-		default:
-			out = d.static(sc, containerEntry(d.rules.VirtualBase, "ALDAP virtual directory"),
-				containerEntry(d.rules.UsersBase, "Users"), containerEntry(d.rules.GroupsBase, "Virtual groups"))
-			users, res := d.users(ctx, sc, "")
-			if res.Code != ldap.LDAPResultSuccess {
-				return nil, res
-			}
-			out = append(out, users...)
-		}
-	case profile.BaseUsers:
-		if req.Scope == listener.ScopeBase {
-			out = d.static(sc, containerEntry(d.rules.UsersBase, "Users"))
-		} else {
-			users, res := d.users(ctx, sc, "")
-			if res.Code != ldap.LDAPResultSuccess {
-				return nil, res
-			}
-			out = users
-		}
-	case profile.BaseGroups:
-		if req.Scope != listener.ScopeOne {
-			// Virtual groups arrive with Stage 5; the container itself exists.
-			out = d.static(sc, containerEntry(d.rules.GroupsBase, "Virtual groups"))
-		}
-	case profile.BaseUser:
-		if req.Scope != listener.ScopeOne {
-			users, res := d.users(ctx, sc, rdn)
-			if res.Code != ldap.LDAPResultSuccess {
-				return nil, res
-			}
-			out = users
-		}
-	case profile.BaseGroup, profile.BaseOutside:
-		// Virtual groups arrive with Stage 5.
+// detectTrap raises the honeytoken event for a search that targets a trap
+// (SPEC §4.5) and, in honeypot mode, for every search of the virtual tree.
+func (d *Directory) detectTrap(sc *searchCtx, kind profile.BaseKind, rdn string) {
+	if kind == profile.BaseRootDSE || kind == profile.BaseSubschema {
+		return
 	}
-	return out, listener.Success
+	if h := d.honeytokenTarget(sc.filter, rdn); h != nil {
+		sc.trap = h.Account
+	} else if d.rules.Mode == "honeypot" {
+		sc.trap = sc.conn.Bound().Name
+		if sc.trap == "" {
+			sc.trap = "anonymous"
+		}
+	}
+	if sc.trap != "" {
+		d.honeytokenHit(sc.conn, "search", sc.trap)
+	}
 }
 
-func (sc *searchCtx) limits(d *Directory) struct{ MaxFilterDepth, MaxFilterLen int } {
-	return struct{ MaxFilterDepth, MaxFilterLen int }{d.rules.Limits.MaxFilterDepth, d.rules.Limits.MaxFilterLen}
+// entriesFor serves the entries of one base kind (SPEC §4.2 step 2).
+func (d *Directory) entriesFor(ctx context.Context, sc *searchCtx, kind profile.BaseKind, rdn string) ([]listener.Entry, listener.Result) {
+	scope := sc.req.Scope
+	switch kind {
+	case profile.BaseRootDSE:
+		if scope == listener.ScopeBase {
+			return d.static(sc, rootDSE(d.rules, d.o.Version, d.o.StartTLS)), listener.Success
+		}
+	case profile.BaseSubschema:
+		if scope == listener.ScopeBase {
+			return d.static(sc, subschema(d.rules)), listener.Success
+		}
+	case profile.BaseVirtual, profile.BaseUsers, profile.BaseGroups:
+		return d.containerEntries(ctx, sc, kind)
+	case profile.BaseUser:
+		if scope != listener.ScopeOne {
+			return d.users(ctx, sc, rdn)
+		}
+	case profile.BaseGroup:
+		if scope != listener.ScopeOne {
+			return d.groups(ctx, sc, rdn)
+		}
+	case profile.BaseOutside:
+	}
+	return nil, listener.Success
+}
+
+// containerEntries serves <virtual_base>, ou=users and ou=groups with
+// their children according to the scope.
+func (d *Directory) containerEntries(ctx context.Context, sc *searchCtx, kind profile.BaseKind) ([]listener.Entry, listener.Result) {
+	root := containerEntry(d.rules.VirtualBase, "ALDAP virtual directory")
+	users := containerEntry(d.rules.UsersBase, "Users")
+	groups := containerEntry(d.rules.GroupsBase, "Virtual groups")
+	var out []listener.Entry
+	withUsers, withGroups := false, false
+	switch {
+	case kind == profile.BaseVirtual && sc.req.Scope == listener.ScopeBase:
+		out = d.static(sc, root)
+	case kind == profile.BaseVirtual && sc.req.Scope == listener.ScopeOne:
+		out = d.static(sc, users, groups)
+	case kind == profile.BaseVirtual:
+		out = d.static(sc, root, users, groups)
+		withUsers, withGroups = true, true
+	case kind == profile.BaseUsers && sc.req.Scope == listener.ScopeBase:
+		out = d.static(sc, users)
+	case kind == profile.BaseUsers:
+		withUsers = true
+	case kind == profile.BaseGroups && sc.req.Scope == listener.ScopeOne:
+		withGroups = true
+	case kind == profile.BaseGroups && sc.req.Scope == listener.ScopeBase:
+		out = d.static(sc, groups)
+	default:
+		out = d.static(sc, groups)
+		withGroups = true
+	}
+	if withUsers {
+		es, res := d.users(ctx, sc, "")
+		if res.Code != ldap.LDAPResultSuccess {
+			return nil, res
+		}
+		out = append(out, es...)
+	}
+	if withGroups {
+		es, res := d.groups(ctx, sc, "")
+		if res.Code != ldap.LDAPResultSuccess {
+			return nil, res
+		}
+		out = append(out, es...)
+	}
+	return out, listener.Success
 }
 
 // static filters the locally served entries with the client filter (client
@@ -231,6 +292,30 @@ func (d *Directory) static(sc *searchCtx, es ...*entry) []listener.Entry {
 		}
 	}
 	return out
+}
+
+// groups serves the virtual groups (one when name is given) that match
+// the client filter, evaluated locally (member is DN-compared).
+func (d *Directory) groups(ctx context.Context, sc *searchCtx, name string) ([]listener.Entry, listener.Result) {
+	if !d.rules.HasGroups() {
+		return nil, listener.Success
+	}
+	m, err := d.membership(ctx)
+	if err != nil {
+		return nil, d.upstreamError(sc, err)
+	}
+	sc.queries++
+	var out []listener.Entry
+	for _, gd := range m.groups {
+		if name != "" && !strings.EqualFold(gd.g.Name, name) {
+			continue
+		}
+		e := d.groupEntry(gd)
+		if e.matches(sc.filter) {
+			out = append(out, e.project(sc.want, sc.all))
+		}
+	}
+	return out, listener.Success
 }
 
 // sizeLimit applies the client sizeLimit and limits.max_result_size.
@@ -246,8 +331,9 @@ func (d *Directory) sizeLimit(sc *searchCtx, out []listener.Entry) (listener.Res
 }
 
 // requestedAttrs classifies the requested attribute list: lower-case client
-// names that are allowed, whether everything allowed was requested ("*", "+"
-// alone or an empty list), and the names outside the allowlist.
+// names that are allowed (or belong to ALDAP's own entries), whether
+// everything was requested ("*", "+" alone or an empty list), and the
+// names outside the allowlist.
 func (d *Directory) requestedAttrs(attrs []string) (want map[string]bool, all bool, denied []string) {
 	want = map[string]bool{}
 	if len(attrs) == 0 {
@@ -264,7 +350,7 @@ func (d *Directory) requestedAttrs(attrs []string) (want map[string]bool, all bo
 			if i := strings.IndexByte(l, ';'); i > 0 {
 				l = l[:i]
 			}
-			if d.rules.IsAllowed(l) || isStaticAttr(l) {
+			if d.rules.IsAllowed(l) || isStaticAttr(l) || groupAttrs[l] {
 				want[l] = true
 			} else {
 				denied = append(denied, a)
@@ -286,43 +372,44 @@ func isStaticAttr(l string) bool {
 	return false
 }
 
-// upstreamFilter rewrites the client filter for the upstream: attribute
-// renames, denied terms → false, AND profile filter, AND NOT exclude, and
-// for a single-user lookup AND (rdn_attr=value).
-func (d *Directory) upstreamFilter(sc *searchCtx, rdn string) *ldapfilter.Filter {
+// splitFilter separates the client filter into the upstream part and the
+// local post-filter (SPEC §4.2 steps 3 and 7): denied terms are recorded
+// and become false, computed attributes and memberOf are evaluated
+// locally. The upstream part is rewritten to upstream names (attrs.map,
+// objectclass.map), AND profile filter, AND NOT exclude, and for a
+// single-user lookup AND (rdn_attr=value).
+func (d *Directory) splitFilter(sc *searchCtx, rdn string) {
 	for _, a := range sc.filter.Attrs() {
 		if d.rules.Classify(a) == ldapfilter.Denied {
 			sc.terms = append(sc.terms, a)
 		}
 	}
-	mapped := ldapfilter.MapAttrs(sc.filter, d.rules.AttrMap())
-	exec, _ := ldapfilter.Split(mapped, func(attr string) ldapfilter.Class {
-		// Attributes were renamed to upstream names; classify by client names.
-		for _, c := range d.rules.ClientAttrs(attr) {
-			if d.rules.Classify(c) == ldapfilter.Upstream {
-				return ldapfilter.Upstream
-			}
-		}
-		return d.rules.Classify(attr)
-	})
+	exec, post := ldapfilter.Split(sc.filter, d.rules.Classify)
+	if !post.IsTrue() {
+		sc.post = post
+	}
 	if exec.IsFalse() {
-		return exec
+		sc.upstream = exec
+		return
 	}
-	f := exec
-	if d.rules.Filter != nil {
-		f = ldapfilter.Inject(f, d.rules.Filter)
-	}
-	if d.rules.Exclude != nil {
-		f = ldapfilter.Exclude(f, d.rules.Exclude)
-	}
+	up := exec.Clone()
+	ldapfilter.Walk(up, func(n *ldapfilter.Filter) bool {
+		if n.Kind == ldapfilter.Equality && strings.EqualFold(n.Attr, "objectClass") {
+			n.Value = d.rules.UpstreamObjectClass(n.Value)
+		}
+		return true
+	})
+	up = ldapfilter.MapAttrs(up, d.rules.AttrMap())
+	up = d.profileFilter(up)
 	if rdn != "" {
-		f = ldapfilter.Inject(f, &ldapfilter.Filter{Kind: ldapfilter.Equality, Attr: d.rules.RDNAttr, Value: rdn})
+		up = ldapfilter.Inject(up, &ldapfilter.Filter{Kind: ldapfilter.Equality, Attr: d.rules.RDNAttr, Value: rdn})
 	}
-	return f
+	sc.upstream = up
 }
 
-// upstreamAttrs lists the upstream attributes to fetch for the requested
-// client attributes plus the ones the pipeline needs itself.
+// upstreamAttrs lists the upstream attributes to fetch: rdn_attr and
+// objectGUID, the requested allowed attributes, the dependencies of
+// computed attributes and the allowed attributes the post-filter reads.
 func (d *Directory) upstreamAttrs(sc *searchCtx) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -341,24 +428,103 @@ func (d *Directory) upstreamAttrs(sc *searchCtx) []string {
 			add(d.rules.UpstreamAttr(client))
 		}
 	}
+	for _, c := range d.rules.Computed() {
+		for _, dep := range c.Deps {
+			add(dep)
+		}
+	}
+	if sc.post != nil {
+		for _, a := range sc.post.Attrs() {
+			if d.rules.IsAllowed(a) && !d.rules.IsVirtualAttr(a) {
+				add(d.rules.UpstreamAttr(a))
+			}
+		}
+	}
 	return out
 }
 
+// needMembership reports whether the search needs group membership:
+// memberOf is returned or filtered on.
+func (d *Directory) needMembership(sc *searchCtx) bool {
+	if !d.rules.HasGroups() {
+		return false
+	}
+	if sc.all || sc.want[strings.ToLower(profile.AttrMemberOf)] {
+		return true
+	}
+	if sc.post != nil {
+		for _, a := range sc.post.Attrs() {
+			if strings.EqualFold(a, profile.AttrMemberOf) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // users searches every base, merges, de-duplicates and transforms the
-// result into virtual user entries. rdn restricts the search to one user.
+// result into virtual user entries; honeytokens are added as if they came
+// from the upstream. rdn restricts the search to one user.
 func (d *Directory) users(ctx context.Context, sc *searchCtx, rdn string) ([]listener.Entry, listener.Result) {
-	f := d.upstreamFilter(sc, rdn)
-	if f.IsFalse() {
+	d.splitFilter(sc, rdn)
+	if sc.upstream.IsFalse() {
 		return nil, listener.Success
 	}
+	var merged []upstream.Entry
+	if d.up != nil {
+		var res listener.Result
+		if merged, res = d.fetchUsers(ctx, sc); res.Code != ldap.LDAPResultSuccess {
+			return nil, res
+		}
+	}
+	traps := len(merged)
+	for _, h := range d.rules.Honeytokens() {
+		if rdn == "" || strings.EqualFold(h.Attrs[d.rules.RDNAttr][0], rdn) {
+			merged = append(merged, honeytokenEntry(h))
+		}
+	}
+	var mem *membership
+	if d.needMembership(sc) {
+		m, err := d.membership(ctx)
+		if err != nil {
+			return nil, d.upstreamError(sc, err)
+		}
+		mem = m
+	}
+	rdns := map[string]int{}
+	for _, e := range merged {
+		rdns[strings.ToLower(e.First(d.rules.RDNAttr))]++
+	}
+	out := make([]listener.Entry, 0, len(merged))
+	for i, e := range merged {
+		collision := rdns[strings.ToLower(e.First(d.rules.RDNAttr))] > 1
+		if collision {
+			d.log.Warn("virtual RDN collision", "rdn", e.First(d.rules.RDNAttr), "upstream_dn", e.DN)
+		}
+		full := d.transform(e, mem, collision)
+		// Upstream entries were selected by the directory and need only the
+		// post-filter; traps never went upstream and face the whole filter.
+		if i < traps && sc.post != nil && !full.matches(sc.post) || i >= traps && !full.matches(sc.filter) {
+			continue
+		}
+		d.mask(full)
+		out = append(out, full.project(sc.want, sc.all))
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].DN < out[j].DN })
+	return out, listener.Success
+}
+
+// fetchUsers runs the upstream searches over the profile bases in parallel
+// and merges them with de-duplication.
+func (d *Directory) fetchUsers(ctx context.Context, sc *searchCtx) ([]upstream.Entry, listener.Result) {
 	attrs := d.upstreamAttrs(sc)
 	limit := d.rules.Limits.MaxResultSize
 	if sc.req.SizeLimit > 0 && (limit <= 0 || sc.req.SizeLimit < limit) {
 		limit = sc.req.SizeLimit
 	}
 	fetch := 0
-	if limit > 0 {
-		fetch = limit + 1 // one more to detect the overflow
+	if limit > 0 && sc.post == nil {
+		fetch = limit + 1 // one more to detect the overflow; a post-filter needs the whole set
 	}
 	results := make([]*upstream.Result, len(d.rules.Bases))
 	errs := make([]error, len(d.rules.Bases))
@@ -374,7 +540,7 @@ func (d *Directory) users(ctx context.Context, sc *searchCtx, rdn string) ([]lis
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i], errs[i] = d.up.Search(ctx, upstream.SearchRequest{Base: base, Scope: upstream.ScopeSub, Filter: f,
+			results[i], errs[i] = d.up.Search(ctx, upstream.SearchRequest{Base: base, Scope: upstream.ScopeSub, Filter: sc.upstream,
 				Attrs: attrs, SizeLimit: fetch, TimeLimit: sc.req.TimeLimit})
 		}(i, base)
 	}
@@ -400,16 +566,7 @@ func (d *Directory) users(ctx context.Context, sc *searchCtx, rdn string) ([]lis
 			merged = append(merged, e)
 		}
 	}
-	out := make([]listener.Entry, 0, len(merged))
-	rdns := map[string]int{}
-	for _, e := range merged {
-		rdns[strings.ToLower(e.First(d.rules.RDNAttr))]++
-	}
-	for _, e := range merged {
-		out = append(out, d.transform(sc, e, rdns[strings.ToLower(e.First(d.rules.RDNAttr))] > 1))
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].DN < out[j].DN })
-	return out, listener.Success
+	return merged, listener.Success
 }
 
 // dedupeKey identifies an upstream entry across bases: objectGUID for AD,
@@ -420,42 +577,62 @@ func (d *Directory) dedupeKey(e upstream.Entry) string {
 			return "guid:" + g
 		}
 	}
-	if dn, err := ldapfilter.ParseDN(e.DN); err == nil {
-		return "dn:" + dn.Canonical()
-	}
-	return "dn:" + strings.ToLower(e.DN)
+	return "dn:" + canonicalDN(e.DN)
 }
 
-// transform maps an upstream entry to its virtual form (SPEC §4.2 step 6):
-// virtual DN from rdn_attr, attributes renamed and reduced to the requested
-// allowed ones.
-func (d *Directory) transform(sc *searchCtx, e upstream.Entry, collision bool) listener.Entry {
+// transform maps an upstream entry to its full virtual form (SPEC §4.2
+// step 6): virtual DN from rdn_attr, allowed attributes renamed, computed
+// attributes evaluated, object classes mapped and memberOf set from the
+// virtual groups. Masking and projection happen afterwards.
+func (d *Directory) transform(e upstream.Entry, mem *membership, collision bool) *entry {
 	rdn := e.First(d.rules.RDNAttr)
 	if rdn == "" {
 		rdn = e.DN
 	}
-	var dn string
-	if collision {
-		guid := hex.EncodeToString([]byte(e.First(attrObjectGUID)))
-		if guid == "" {
-			guid = hex.EncodeToString([]byte(e.DN))
-		}
-		dn = d.rules.UsersBase.Child(ldapfilter.RDN{AVAs: []ldapfilter.AVA{{Type: "cn", Value: rdn}, {Type: "objectGUID", Value: guid}}}).String()
-		d.log.Warn("virtual RDN collision", "rdn", rdn, "upstream_dn", e.DN)
-	} else {
-		dn = d.rules.UserDN(rdn)
-	}
-	out := &entry{dn: dn}
+	out := &entry{dn: d.virtualUserDN(rdn, e.First(attrObjectGUID), e.DN, collision)}
 	for _, client := range d.rules.AllowedAttrs() {
-		l := strings.ToLower(client)
-		if !sc.all && !sc.want[l] {
+		if d.rules.IsVirtualAttr(client) {
 			continue
 		}
-		if vals := e.Get(d.rules.UpstreamAttr(client)); len(vals) > 0 {
-			out.add(client, vals...)
+		vals := e.Get(d.rules.UpstreamAttr(client))
+		if strings.EqualFold(client, "objectClass") {
+			vals = d.rules.MapObjectClass(vals)
+		}
+		out.add(client, vals...)
+	}
+	for _, c := range d.rules.Computed() {
+		data := make(map[string]string, len(c.Deps))
+		for _, dep := range c.Deps {
+			data[dep] = e.First(dep)
+		}
+		v, err := c.Eval(data)
+		if err != nil {
+			d.log.Debug("computed attribute failed", "attr", c.Name, "err", err)
+			continue
+		}
+		if v != "" {
+			out.set(c.Name, v)
 		}
 	}
-	return listener.Entry{DN: out.dn, Attrs: out.attrs}
+	if mem != nil {
+		out.set(profile.AttrMemberOf, mem.userGroups[d.dedupeKey(e)]...)
+	}
+	return out
+}
+
+// mask applies attrs.mask to the entry (after computed, before projection).
+func (d *Directory) mask(e *entry) {
+	for _, m := range d.rules.Masks() {
+		vals := e.get(m.Name)
+		if len(vals) == 0 {
+			continue
+		}
+		masked := make([]string, len(vals))
+		for i, v := range vals {
+			masked[i] = m.Apply(v)
+		}
+		e.set(m.Name, masked...)
+	}
 }
 
 // upstreamError maps an upstream failure to a client result.
@@ -584,7 +761,7 @@ func redactFilter(f *ldapfilter.Filter) string {
 
 func (d *Directory) emitSearch(sc *searchCtx, res listener.Result, results int) {
 	ev := sc.conn.Event(events.Search, events.LevelLow)
-	ev.Upstream = d.up.Name()
+	ev.Upstream = d.upstreamName()
 	ev.UpstreamServer = sc.server
 	ev.Duration = d.now().Sub(sc.start)
 	data := map[string]any{
@@ -602,6 +779,9 @@ func (d *Directory) emitSearch(sc *searchCtx, res listener.Result, results int) 
 	}
 	if len(sc.terms) > 0 {
 		data["denied_terms"] = sc.terms
+	}
+	if sc.trap != "" {
+		data["honeytoken"] = sc.trap
 	}
 	ev.Data = data
 	d.ev.Emit(ev)

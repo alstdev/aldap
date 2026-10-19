@@ -51,6 +51,7 @@ type daemon struct {
 	upstreams map[string]*upstream.Upstream
 	profiles  []*servedProfile
 	global    *listener.Limiter
+	locks     *vdir.MemoryLocks
 
 	mu       sync.Mutex
 	cancel   context.CancelFunc
@@ -103,7 +104,7 @@ func buildDaemon(cfg *config.Config, o daemonOptions) (*daemon, error) {
 		log.Warn("configuration warning", "key", w.Path, "msg", w.Msg)
 	}
 	d := &daemon{cfg: cfg, log: log, events: events.Logger{Log: log}, opts: o, upstreams: map[string]*upstream.Upstream{},
-		global: listener.NewLimiter(cfg.Server.MaxConnections)}
+		global: listener.NewLimiter(cfg.Server.MaxConnections), locks: vdir.NewMemoryLocks()}
 	if err := d.buildUpstreams(); err != nil {
 		return nil, err
 	}
@@ -139,28 +140,51 @@ func (d *daemon) upstreamEvent(e upstream.Event) {
 
 func (d *daemon) buildProfiles() error {
 	for _, name := range sortedKeys(d.cfg.Profiles) {
-		pcfg := d.cfg.Profiles[name]
-		if pcfg.Mode != "proxy" {
-			// honeypot and mock modes arrive with later stages (docs/DECISIONS.md).
-			d.log.Warn("profile mode not implemented in this build, listener not started", "profile", name, "mode", pcfg.Mode)
-			continue
-		}
-		sp, err := d.buildProfile(name, pcfg)
+		sp, err := d.buildProfile(name, d.cfg.Profiles[name])
 		if err != nil {
 			return err
 		}
 		d.profiles = append(d.profiles, sp)
 	}
 	if len(d.profiles) == 0 {
-		return errors.New("no proxy profile to serve")
+		return errors.New("no profile to serve")
 	}
 	return nil
 }
 
-func (d *daemon) buildProfile(name string, pcfg *config.Profile) (*servedProfile, error) {
+// profileSearcher picks the data source of a profile: the upstream for
+// proxy, a Mock for mock, nothing for honeypot (SPEC §3.4 mode).
+func (d *daemon) profileSearcher(name string, pcfg *config.Profile) (vdir.Searcher, error) {
+	switch pcfg.Mode {
+	case "mock":
+		base := ""
+		if len(pcfg.Bases) > 0 {
+			base = pcfg.Bases[0]
+		}
+		m, err := vdir.LoadMock(pcfg.Mock.File, base)
+		if err != nil {
+			return nil, fmt.Errorf("profile.%s.mock.file: %w", name, err)
+		}
+		if len(pcfg.Bases) == 0 {
+			pcfg.Bases = []string{m.BaseDN()}
+		}
+		d.log.Info("mock profile loaded", "profile", name, "file", pcfg.Mock.File, "entries", m.Len())
+		return m, nil
+	case "honeypot":
+		d.log.Warn("honeypot profile: every bind and search is reported as a honeytoken hit", "profile", name)
+		return nil, nil
+	}
 	up, ok := d.upstreams[pcfg.Upstream]
 	if !ok {
 		return nil, fmt.Errorf("profile.%s.upstream: unknown upstream %q", name, pcfg.Upstream)
+	}
+	return up, nil
+}
+
+func (d *daemon) buildProfile(name string, pcfg *config.Profile) (*servedProfile, error) {
+	up, err := d.profileSearcher(name, pcfg)
+	if err != nil {
+		return nil, err
 	}
 	clientPW := ""
 	if pcfg.ClientBind.DN != "" && pcfg.ClientBind.PasswordHash == "" {
@@ -179,7 +203,8 @@ func (d *daemon) buildProfile(name string, pcfg *config.Profile) (*servedProfile
 	}
 	sp := &servedProfile{name: name, cfg: pcfg, addrs: pcfg.Listen}
 	offersStartTLS := pcfg.Transport == listener.TransportStartTLS || pcfg.Transport == listener.TransportLDAPStartTLS
-	sp.dir = vdir.New(rules, up, vdir.Options{Logger: d.log, Events: d.events, Version: version, StartTLS: offersStartTLS})
+	sp.dir = vdir.New(rules, up, vdir.Options{Logger: d.log, Events: d.events, Version: version, StartTLS: offersStartTLS,
+		Locks: d.locks, HoneytokenLock: d.cfg.Intrusion.Honeytoken.LockDuration.D()})
 	lcfg := listener.Config{
 		Profile: name, Transport: pcfg.Transport, StartTLSRequired: pcfg.StartTLSRequired, Handler: sp.dir,
 		MaxRequestBytes: int64(pcfg.Limits.MaxRequestBytes), IdleTimeout: pcfg.Limits.IdleTimeout.D(),

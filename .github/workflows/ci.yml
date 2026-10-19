@@ -37,6 +37,7 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version-file: go.mod, cache: true }
       - run: sudo apt-get update && sudo apt-get install -y ldap-utils
+      - run: python3 -m pip install --user ldap3   # TESTING.md 48 (TestDaemon_Ldap3 skips without it)
       - run: make test
       - run: make integration
       - run: go test -run TestNoSecretsInOutput -tags integration ./...
