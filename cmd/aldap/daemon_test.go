@@ -54,17 +54,6 @@ func (s *safeBuffer) String() string {
 }
 
 // freePort reserves a loopback port and releases it for the daemon.
-func freePort(t *testing.T) int {
-	t.Helper()
-	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port
-}
-
 // daemonConfig renders a configuration with an ldaps profile "virola" and
 // a ldap+starttls (required) profile "plain" over one plain testdir upstream.
 func daemonConfig(t *testing.T, dc *testdir.Server, caDir string, extra string) (path string, ldapsPort, plainPort int) {
@@ -369,7 +358,7 @@ func TestDaemon_BuildErrors(t *testing.T) {
 	caDir := filepath.Join(t.TempDir(), "ca")
 	opts := daemonOptions{LogOut: &safeBuffer{}, EventsOut: io.Discard, Secrets: secret.Default, Argon2: fastArgon}
 	// Invalid configuration.
-	path, _, _ := daemonConfig(t, dc, caDir, "[profile.bad]\nlisten = [\"127.0.0.1:1\"]\nupstream = \"ad\"\nvirtual_base = \"dc=bad\"\nbases = [\"DC=test,DC=aldap\"]\n[profile.bad.attrs]\nallow = [\"*\"]\n")
+	path, _, _ := daemonConfig(t, dc, caDir, fmt.Sprintf("[profile.bad]\nlisten = [\"127.0.0.1:%d\"]\nupstream = \"ad\"\nvirtual_base = \"dc=bad\"\nbases = [\"DC=test,DC=aldap\"]\n[profile.bad.attrs]\nallow = [\"*\"]\n", freePort(t)))
 	if _, err := loadDaemon(path, true, opts); err == nil || !strings.Contains(err.Error(), "configuration invalid") {
 		t.Errorf("invalid config: %v", err)
 	}
@@ -387,7 +376,7 @@ func TestDaemon_BuildErrors(t *testing.T) {
 	t.Setenv("ALDAP_TEST_CLIENT_PW", clientPassword)
 	// honeypot profile is served (with a warning); a mock profile needs a readable file.
 	logs := &safeBuffer{}
-	path, _, _ = daemonConfig(t, dc, caDir, "[profile.honey]\nlisten = [\"127.0.0.1:1389\"]\ntransport = \"ldap\"\nupstream = \"ad\"\nmode = \"honeypot\"\nvirtual_base = \"dc=honey\"\n")
+	path, _, _ = daemonConfig(t, dc, caDir, fmt.Sprintf("[profile.honey]\nlisten = [\"127.0.0.1:%d\"]\ntransport = \"ldap\"\nupstream = \"ad\"\nmode = \"honeypot\"\nvirtual_base = \"dc=honey\"\n", freePort(t)))
 	d, err := loadDaemon(path, true, daemonOptions{LogOut: logs, EventsOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true})
 	if err != nil {
 		t.Fatalf("honeypot config: %v", err)
@@ -396,7 +385,7 @@ func TestDaemon_BuildErrors(t *testing.T) {
 		t.Errorf("honeypot handling: %d profiles\n%s", len(d.profiles), logs.String())
 	}
 	d.stop()
-	path, _, _ = daemonConfig(t, dc, caDir, "[profile.mock]\nlisten = [\"127.0.0.1:1390\"]\ntransport = \"ldap\"\nmode = \"mock\"\nvirtual_base = \"dc=mock\"\n[profile.mock.mock]\nfile = \"/nonexistent/mock.toml\"\n[profile.mock.attrs]\nallow = [\"cn\"]\n")
+	path, _, _ = daemonConfig(t, dc, caDir, fmt.Sprintf("[profile.mock]\nlisten = [\"127.0.0.1:%d\"]\ntransport = \"ldap\"\nmode = \"mock\"\nvirtual_base = \"dc=mock\"\n[profile.mock.mock]\nfile = \"/nonexistent/mock.toml\"\n[profile.mock.attrs]\nallow = [\"cn\"]\n", freePort(t)))
 	if _, err := loadDaemon(path, true, daemonOptions{LogOut: logs, EventsOut: logs, Secrets: secret.Default, Argon2: fastArgon, NoPersistCerts: true}); err == nil || !strings.Contains(err.Error(), "mock.file") {
 		t.Errorf("mock file missing: %v", err)
 	}

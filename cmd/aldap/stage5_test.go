@@ -349,6 +349,7 @@ func TestRunCheck_AsClient(t *testing.T) {
 	if err := os.WriteFile(mockFile, []byte("cn,sAMAccountName,mail\nMock One,mock.one,m1@mock.local\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	appPort, mockPort, honeyPort := freePort(t), freePort(t), freePort(t)
 	cfg := writeTemp(t, fmt.Sprintf(`
 [upstream.ad]
 servers = [%q]
@@ -356,7 +357,7 @@ bind_dn = "CN=svc-aldap,CN=Users,DC=test,DC=aldap"
 bind_password_env = "ALDAP_TEST_PW"
 base_dn = "DC=test,DC=aldap"
 [profile.app]
-listen = [":1636"]
+listen = ["127.0.0.1:%d"]
 upstream = "ad"
 virtual_base = "ou=app,dc=aldap"
 bases = ["OU=Office,DC=test,DC=aldap", "OU=Branch,DC=test,DC=aldap"]
@@ -373,7 +374,7 @@ uid = "sAMAccountName"
 tag = "{{ .department }}"
 [profile.app.groups.all]
 [profile.mock]
-listen = [":1389"]
+listen = ["127.0.0.1:%d"]
 mode = "mock"
 virtual_base = "ou=mock,dc=aldap"
 bases = ["ou=people,dc=mock"]
@@ -382,11 +383,11 @@ file = %q
 [profile.mock.attrs]
 allow = ["cn", "mail"]
 [profile.honey]
-listen = [":1390"]
+listen = ["127.0.0.1:%d"]
 mode = "honeypot"
 virtual_base = "ou=honey,dc=aldap"
 honeytokens = ["x@y"]
-`, dc.URL(), mockFile))
+`, dc.URL(), appPort, mockPort, mockFile, honeyPort))
 	t.Setenv("ALDAP_TEST_PW", "svc-aldap-pass")
 	t.Setenv("ALDAP_CONFIG", "")
 	run := func(args ...string) (int, string, string) {

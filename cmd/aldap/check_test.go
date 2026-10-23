@@ -3,25 +3,31 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-const validTOML = `
+// validTOML renders a valid offline configuration; the listen port is picked
+// at run time (check does not bind it).
+func validTOML(t *testing.T) string {
+	t.Helper()
+	return fmt.Sprintf(`
 [upstream.ad]
 servers = ["ldaps://dc.example.org:636"]
 bind_dn = "CN=svc,DC=example,DC=org"
 bind_password_env = "ALDAP_TEST_PW"
 [profile.app]
-listen = [":1636"]
+listen = ["127.0.0.1:%d"]
 upstream = "ad"
 virtual_base = "ou=app,dc=aldap"
 bases = ["OU=People,DC=example,DC=org"]
 [profile.app.attrs]
 allow = ["cn"]
-`
+`, freePort(t))
+}
 
 func writeTemp(t *testing.T, body string) string {
 	t.Helper()
@@ -44,9 +50,10 @@ func TestRunCheck_Example(t *testing.T) {
 }
 
 func TestRunCheck_Cases(t *testing.T) {
-	valid := writeTemp(t, validTOML)
-	dead := writeTemp(t, strings.Replace(validTOML, `servers = ["ldaps://dc.example.org:636"]`, `servers = ["ldap://127.0.0.1:9"]`, 1)+"\n[upstream.ad.timeouts]\nconnect = \"300ms\"\n")
-	invalid := writeTemp(t, "[server]\nlog_level = \"loud\"\n[profile.p]\nlisten = [\":1\"]\n")
+	valid := writeTemp(t, validTOML(t))
+	deadURL := fmt.Sprintf("ldap://127.0.0.1:%d", freePort(t))
+	dead := writeTemp(t, strings.Replace(validTOML(t), `servers = ["ldaps://dc.example.org:636"]`, `servers = ["`+deadURL+`"]`, 1)+"\n[upstream.ad.timeouts]\nconnect = \"300ms\"\n")
+	invalid := writeTemp(t, fmt.Sprintf("[server]\nlog_level = \"loud\"\n[profile.p]\nlisten = [\"127.0.0.1:%d\"]\n", freePort(t)))
 	unknown := writeTemp(t, "[server]\nlog_levl = \"info\"\n")
 	tests := []struct {
 		name     string
@@ -67,7 +74,7 @@ func TestRunCheck_Cases(t *testing.T) {
 		{name: "env_override_breaks", args: []string{"--config", valid}, env: map[string]string{"ALDAP_SERVER_LOG_LEVEL": "loud"}, wantCode: 1, wantOut: "server.log_level"},
 		{name: "quick_and_online", args: []string{"--config", valid, "--quick", "--online"}, wantCode: 2, wantErr: "mutually exclusive"},
 		{name: "online_secret_missing", args: []string{"--config", valid, "--online"}, wantCode: 1, wantOut: "ERROR upstream.ad.bind_password"},
-		{name: "online_dead_server", args: []string{"--config", dead, "--online"}, env: map[string]string{"ALDAP_TEST_PW": "x"}, wantCode: 1, wantOut: "ERROR upstream.ad: ldap://127.0.0.1:9 connect: connect ldap://127.0.0.1:9"},
+		{name: "online_dead_server", args: []string{"--config", dead, "--online"}, env: map[string]string{"ALDAP_TEST_PW": "x"}, wantCode: 1, wantOut: "ERROR upstream.ad: " + deadURL + " connect: connect " + deadURL},
 		{name: "online_skips_on_offline_errors", args: []string{"--config", invalid, "--online"}, wantCode: 1, wantOut: "ERROR server.log_level"},
 		{name: "extra_arg", args: []string{"--config", valid, "extra"}, wantCode: 2, wantErr: "unexpected argument"},
 		{name: "bad_flag", args: []string{"--nope"}, wantCode: 2, wantErr: "flag provided but not defined"},
@@ -95,7 +102,7 @@ func TestRunCheck_Cases(t *testing.T) {
 }
 
 func TestRunCheck_JSON(t *testing.T) {
-	p := writeTemp(t, "[upstream.u]\nservers = [\"ldap://dc\"]\n[profile.p]\nlisten = [\":1\"]\n")
+	p := writeTemp(t, fmt.Sprintf("[upstream.u]\nservers = [\"ldap://dc\"]\n[profile.p]\nlisten = [\"127.0.0.1:%d\"]\n", freePort(t)))
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"check", "--json", "--config", p}, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit %d, stderr %s", code, stderr.String())

@@ -16,6 +16,8 @@ func TestRunCheck_Online(t *testing.T) {
 	dc := testdir.StartFixture(t)
 	dead := testdir.Start(t, testdir.WithDirectory(dc.Dir))
 	dead.Kill()
+	otherURL := fmt.Sprintf("ldap://127.0.0.1:%d", freePort(t))
+	appPort, honeyPort := freePort(t), freePort(t)
 	toml := func(servers, bases string) string {
 		return fmt.Sprintf(`
 [upstream.ad]
@@ -26,21 +28,21 @@ base_dn = "DC=test,DC=aldap"
 [upstream.ad.timeouts]
 connect = "1s"
 [upstream.other]
-servers = ["ldap://127.0.0.1:9"]
+servers = ["%s"]
 [upstream.other.timeouts]
 connect = "300ms"
 [profile.app]
-listen = [":1636"]
+listen = ["127.0.0.1:%d"]
 upstream = "ad"
 virtual_base = "ou=app,dc=aldap"
 bases = [%s]
 [profile.app.attrs]
 allow = ["cn"]
 [profile.honey]
-listen = [":1389"]
+listen = ["127.0.0.1:%d"]
 mode = "honeypot"
 virtual_base = "ou=honey,dc=aldap"
-`, servers, bases)
+`, servers, otherURL, appPort, bases, honeyPort)
 	}
 	t.Setenv("ALDAP_TEST_PW", "svc-aldap-pass")
 	t.Setenv("ALDAP_CONFIG", "")
@@ -74,7 +76,7 @@ virtual_base = "ou=honey,dc=aldap"
 	// Text output lists passed probes; a missing base and a dead primary are errors.
 	mixed := writeTemp(t, strings.Replace(toml(fmt.Sprintf("%q, %q", dead.URL(), dc.URL()), `"OU=Office,DC=test,DC=aldap", "OU=Nope,DC=test,DC=aldap"`),
 		`[upstream.other]
-servers = ["ldap://127.0.0.1:9"]
+servers = ["`+otherURL+`"]
 [upstream.other.timeouts]
 connect = "300ms"
 `, "", 1))
@@ -93,7 +95,7 @@ connect = "300ms"
 	t.Setenv("ALDAP_TEST_PW", "svc-admin-pass")
 	admin := writeTemp(t, strings.Replace(strings.Replace(toml(fmt.Sprintf("%q", dc.URL()), `"OU=Office,DC=test,DC=aldap"`),
 		"CN=svc-aldap,", "CN=svc-admin,", 1), `[upstream.other]
-servers = ["ldap://127.0.0.1:9"]
+servers = ["`+otherURL+`"]
 [upstream.other.timeouts]
 connect = "300ms"
 `, "", 1))
