@@ -68,7 +68,7 @@ func (r *running) reloadWith(t *testing.T, edit func(string) string) {
 // TESTING.md 21: ttl — the second identical search does not go to the
 // upstream (counter); after the ttl it does.
 func TestStage9_TTL(t *testing.T) {
-	r := startDaemonVirola(t, "", ttlConfig("1s", false))
+	r := startDaemonVirola(t, "", ttlConfig("3s", false))
 	c := r.clientConn(t)
 	n0 := r.clientSearches()
 	if res := search(t, c, tUsersDN, aliceFilter, "mail"); len(res.Entries) != 1 {
@@ -84,9 +84,10 @@ func TestStage9_TTL(t *testing.T) {
 	if n := r.clientSearches(); n != n1 {
 		t.Errorf("second identical search reached the upstream (%d queries)", n-n1)
 	}
-	hits := findEvents(r, events.Search, func(e events.Record) bool { return e.Data["cache_hit"] == true })
-	if len(hits) != 1 || hits[0].Data["upstream_queries"] != float64(0) {
-		t.Errorf("cache_hit events = %+v", hits)
+	// Sinks write asynchronously: wait for the event of the second search.
+	hit := waitEvents(t, r, "cache hit", events.Search, func(e events.Record) bool { return e.Data["cache_hit"] == true })
+	if hit.Data["upstream_queries"] != float64(0) || hit.UpstreamServer != "" {
+		t.Errorf("cache_hit event = %+v", hit)
 	}
 	// A different request is a miss.
 	search(t, c, tUsersDN, "(sAMAccountName=bob.brown)", "mail")
