@@ -1,0 +1,5 @@
+ALDAP {{.Hostname}}: certificate expires in {{get .Data "days_left"}} days
+Subject: {{get .Data "subject"}}
+Not after: {{get .Data "not_after"}}
+{{- if .Profile}}
+Profile: {{.Profile}}{{end}}

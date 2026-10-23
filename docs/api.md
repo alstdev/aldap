@@ -8,7 +8,7 @@ wiring in `cmd/aldap/control.go`.
 
 | Listener | When | Authentication |
 |---|---|---|
-| IPC socket `[server].ipc_socket` | always (unix; Windows: see below) | none, acts with scope `admin`; file mode `0600` |
+| IPC `[server].ipc_socket` | always (unix socket; Windows named pipe, see below) | none, acts with scope `admin`; unix file mode `0600`, Windows ACL SYSTEM + Administrators |
 | API `[api].listen` | `[api].enabled = true` | `Authorization: Bearer <token>` |
 | Metrics `[api.metrics].listen` | `metrics.enabled` and a separate address | `status:read`, or none with `metrics.public = true` |
 
@@ -20,8 +20,11 @@ wiring in `cmd/aldap/control.go`.
 - The IPC socket is bound under a temporary name, set to `0600` and renamed into place, so it is never
   reachable with wider permissions. A stale socket of a crashed process is replaced; a live one or a
   regular file at the path is a start error.
-- **Windows:** named pipes are not implemented yet (BLOCKED, `docs/DECISIONS.md`): the daemon logs a
-  warning and `aldapctl` has to use `--url` with a token.
+- **Windows:** `ipc_socket` is a named pipe (`\\.\pipe\aldap` by default, `github.com/Microsoft/go-winio`).
+  Its DACL grants access to SYSTEM and Administrators only (`D:P(A;;GA;;;SY)(A;;GA;;;BA)`), remote
+  clients are rejected (`FILE_PIPE_REJECT_REMOTE_CLIENTS`), a pipe already served by another process is a
+  start error, a path outside `\\.\pipe\` is a start error. Clients need an elevated shell. Manual
+  checklist: `docs/windows.md` (not covered by CI, SPEC §10.5).
 
 ## Tokens and scopes
 

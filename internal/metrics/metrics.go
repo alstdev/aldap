@@ -188,3 +188,11 @@ func (m *Metrics) SetCertExpiry(listener string, notAfter time.Time) {
 	}
 	m.CertExpiry.WithLabelValues(listener).Set(time.Until(notAfter).Seconds())
 }
+
+// Notify counts one notification outcome of a channel.
+func (m *Metrics) Notify(channel, result string) {
+	if m == nil {
+		return
+	}
+	m.NotifyTotal.WithLabelValues(channel, result).Inc()
+}

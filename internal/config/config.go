@@ -482,8 +482,8 @@ type Notify struct {
 type Channel struct {
 	Name        string   `toml:"name" doc:"Unique channel name."`
 	Type        string   `toml:"type" doc:"telegram, virola, email or webhook."`
-	Events      []string `toml:"events" doc:"Event types delivered."`
-	MinLevel    string   `toml:"min_level" doc:"Minimum attack level: low, medium or high."`
+	Events      []string `toml:"events" doc:"Event types delivered; lock_account and lock_ip select lock events by target."`
+	MinLevel    string   `toml:"min_level" doc:"Minimum event level delivered: low, medium or high."`
 	TemplateDir string   `toml:"template_dir" doc:"Directory overriding the built-in message templates."`
 
 	// telegram
@@ -491,7 +491,7 @@ type Channel struct {
 	BotTokenFile string        `toml:"bot_token_file" doc:"telegram: file holding the bot token."`
 	BotTokenEnv  string        `toml:"bot_token_env" doc:"telegram: environment variable holding the bot token."`
 	ChatID       string        `toml:"chat_id" doc:"telegram: chat id."`
-	ParseMode    string        `toml:"parse_mode" doc:"telegram: parse mode."`
+	ParseMode    string        `toml:"parse_mode" doc:"telegram: MarkdownV2, HTML or none."`
 	APIBase      string        `toml:"api_base" doc:"telegram: API base URL."`
 
 	// virola
@@ -524,8 +524,8 @@ type Channel struct {
 	HMACSecret     secret.Inline     `toml:"hmac_secret" doc:"webhook: HMAC key, inline (warned)."`
 	HMACSecretFile string            `toml:"hmac_secret_file" doc:"webhook: file holding the HMAC key."`
 	HMACSecretEnv  string            `toml:"hmac_secret_env" doc:"webhook: environment variable holding the HMAC key."`
-	Timeout        Duration          `toml:"timeout" doc:"webhook: request timeout."`
-	Retry          Retry             `toml:"retry" doc:"webhook: retry policy."`
+	Timeout        Duration          `toml:"timeout" doc:"Request timeout (every channel; SMTP: per command)."`
+	Retry          Retry             `toml:"retry" doc:"Retry policy (every channel); max counts the attempts after the first."`
 }
 
 // BotTokenSource returns the telegram bot token source.

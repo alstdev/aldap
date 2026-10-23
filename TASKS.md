@@ -82,13 +82,13 @@
 
 ## Stage 7 — API, метрики, IPC
 Читати: SPEC §3.4 `[api]`, §7, §11, `docs/openapi.yaml`; TESTING «Події, API, notify».
-- [x] `internal/api`: усі ендпоїнти §7, OpenAPI `docs/openapi.yaml` + тест `TestOpenAPIRoutes`; токени/scopes/allow_cidrs; TLS обов'язковий поза loopback; IPC unix socket 0600 / named pipe (BLOCKED: named pipe на Windows потребує `go-winio`, поза SPEC §2.2 — OPEN у DECISIONS); SSE з `Last-Event-ID`; `PUT /v1/config` атомарно з бекапом; `api_call` події; `/healthz`, `/readyz`, `/metrics`.
+- [x] `internal/api`: усі ендпоїнти §7, OpenAPI `docs/openapi.yaml` + тест `TestOpenAPIRoutes`; токени/scopes/allow_cidrs; TLS обов'язковий поза loopback; IPC unix socket 0600 / named pipe (Windows: `go-winio`, ACL SYSTEM+Administrators; запуск на Windows — ручний чекліст `docs/windows.md`); SSE з `Last-Event-ID`; `PUT /v1/config` атомарно з бекапом; `api_call` події; `/healthz`, `/readyz`, `/metrics`.
 - [x] `POST /v1/locks`, `DELETE`, `POST /v1/lockdown`, `/v1/indicators` формати `json|stix-lite|plain`.
 **КП:** httptest-тести на кожен ендпоїнт і scope (403 без scope); SSE відновлення з seq; PUT config з помилкою не змінює файл; покриття ≥ 80%.
 
 ## Stage 8 — Notify
 Читати: SPEC §3.4 `[notify]`, §6 (типи подій для шаблонів); TESTING «Події, API, notify».
-- [ ] `internal/notify`: telegram, virola (`POST /api/v1/rooms/{id}/messages`, Bearer), email (SMTP STARTTLS/TLS), custom webhook; шаблони, cooldown, digest під час атаки, ретраї.
+- [x] `internal/notify`: telegram, virola (`POST /api/v1/rooms/{id}/messages`, Bearer — OPEN: шлях звірити з реальним Virola, DECISIONS), email (SMTP STARTTLS/TLS), custom webhook; шаблони, cooldown, digest під час атаки, ретраї.
 **КП:** тести з httptest/smtp-mock: cooldown не шле дубль; digest агрегує; шаблони рендеряться для кожного типу події; помилка каналу → метрика + лог, не блокує шину.
 
 ## Stage 9 — Кеш і репліка

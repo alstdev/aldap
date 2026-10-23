@@ -19,6 +19,7 @@ import (
 	"github.com/alstdev/aldap/internal/ids"
 	"github.com/alstdev/aldap/internal/listener"
 	"github.com/alstdev/aldap/internal/metrics"
+	"github.com/alstdev/aldap/internal/notify"
 	"github.com/alstdev/aldap/internal/profile"
 	"github.com/alstdev/aldap/internal/ratelimit"
 	"github.com/alstdev/aldap/internal/secret"
@@ -42,11 +43,15 @@ type runtimeState struct {
 	limiter      *ratelimit.Limiter
 	ids          *ids.Engine
 	metrics      *metrics.Metrics
+	notify       *notify.Notifier
 	lockdownAuto atomic.Bool
 }
 
+// notifyQueue is the bus subscription size of the notifier.
+const notifyQueue = 4096
+
 // newRuntimeState builds the process-wide state from the first configuration.
-func newRuntimeState(cfg *config.Config, log *slog.Logger, host string) (*runtimeState, error) {
+func newRuntimeState(cfg *config.Config, log *slog.Logger, host string, secrets secret.Resolver) (*runtimeState, error) {
 	m := metrics.New(version, commit, date)
 	bus, err := events.BusFromConfig(cfg.Events, events.Options{Host: host, Logger: log, Metrics: m})
 	if err != nil {
@@ -55,7 +60,15 @@ func newRuntimeState(cfg *config.Config, log *slog.Logger, host string) (*runtim
 	rs := &runtimeState{bus: bus, metrics: m}
 	rs.limiter = ratelimit.New(ratelimit.Options{Events: rs, Logger: log, Metrics: m})
 	rs.ids = ids.New(cfg.Intrusion, ids.Options{Events: rs, Logger: log, OnAttack: rs.onAttack, OnAttackEnd: rs.onAttackEnd, Metrics: m})
+	rs.notify = notify.New(notify.Options{Hostname: host, Version: version, Secrets: secrets, Logger: log, Metrics: m, UserAgent: "aldap/" + version})
+	rs.notify.Start(bus.Subscribe(notifyQueue))
 	return rs, nil
+}
+
+// close flushes the event sinks and delivers the queued notifications.
+func (r *runtimeState) close() {
+	r.bus.Close()
+	r.notify.Close()
 }
 
 // Emit implements events.Sink: every event reaches the bus and the
@@ -171,7 +184,7 @@ func buildDaemon(cfg *config.Config, o daemonOptions) (*daemon, error) {
 	state := o.State
 	if state == nil {
 		var err error
-		if state, err = newRuntimeState(cfg, log, host); err != nil {
+		if state, err = newRuntimeState(cfg, log, host, o.Secrets); err != nil {
 			return nil, err
 		}
 	} else {
@@ -179,6 +192,9 @@ func buildDaemon(cfg *config.Config, o daemonOptions) (*daemon, error) {
 	}
 	state.lockdownAuto.Store(cfg.Ratelimit.Lockdown.Auto)
 	if err := state.bus.Configure(cfg.Events, events.ConfigureOptions{Stdout: o.EventsOut, Secrets: o.Secrets, UserAgent: "aldap/" + version}); err != nil {
+		return nil, err
+	}
+	if err := state.notify.Configure(cfg.Notify); err != nil {
 		return nil, err
 	}
 	d := &daemon{cfg: cfg, log: log, events: state, opts: o, upstreams: map[string]*upstream.Upstream{},

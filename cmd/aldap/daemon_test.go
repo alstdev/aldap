@@ -222,6 +222,7 @@ func TestDaemon_TLSTermination(t *testing.T) {
 		res.Entries[0].GetAttributeValue("cn") != "Alice Adams" {
 		t.Errorf("entries = %+v", res.Entries)
 	}
+	r.d.state.bus.Flush() // the stdout sink writes asynchronously
 	logs := r.logs.String()
 	if !strings.Contains(logs, `"event":"insecure_config"`) || !strings.Contains(logs, `"what":"plaintext_upstream"`) ||
 		!strings.Contains(logs, "plain ldap:// to upstream without StartTLS") || !strings.Contains(logs, `"level":"WARN"`) {

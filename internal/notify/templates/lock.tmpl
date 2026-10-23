@@ -1,0 +1,5 @@
+ALDAP {{.Hostname}}: {{get .Data "target"}} locked — {{get .Data "key"}}
+Until: {{get .Data "until"}}
+Source: {{get .Data "source"}}{{with get .Data "failures"}}, failures: {{.}}{{end}}
+{{- if .Profile}}
+Profile: {{.Profile}}{{end}}

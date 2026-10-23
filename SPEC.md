@@ -105,6 +105,7 @@
 | `github.com/charmbracelet/bubbletea`, `bubbles`, `lipgloss` | TUI | MIT |
 | `github.com/kardianos/service` | Служба Windows/systemd/launchd | zlib |
 | `github.com/prometheus/client_golang` | /metrics | Apache-2.0 |
+| `github.com/Microsoft/go-winio` | IPC через named pipe на Windows (ACL) | MIT |
 | стандартна бібліотека | HTTP, SMTP, TLS, шаблони, crypto | BSD-3 |
 
 **Правило:** нову залежність можна додати лише з ліцензією MIT/BSD/ISC/Apache-2.0/zlib/MPL-2.0 (без copyleft GPL/AGPL/LGPL). `make licenses` генерує `THIRD_PARTY_LICENSES.md`, CI перевіряє allowlist.
