@@ -72,6 +72,7 @@ func daemonConfigVirola(t *testing.T, dc *testdir.Server, caDir string, extra, v
 log_level = "debug"
 log_format = "json"
 shutdown_timeout = "2s"
+ipc_socket = %q
 
 [tls]
 ca_dir = %q
@@ -123,7 +124,7 @@ default_domain = "test.aldap"
 [profile.plain.attrs]
 allow = ["sAMAccountName", "mail", "objectClass"]
 %s
-`, caDir, dc.URL(), tSvcDN, ldapsPort, virolaExtra, tClientDN, plainPort, extra)
+`, ipcPath(t), caDir, dc.URL(), tSvcDN, ldapsPort, virolaExtra, tClientDN, plainPort, extra)
 	path = filepath.Join(t.TempDir(), "aldap.toml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -140,6 +141,7 @@ type running struct {
 	ldapsAddr string
 	plainAddr string
 	caDir     string
+	path      string
 }
 
 func startDaemon(t *testing.T, extra string) *running {
@@ -162,7 +164,7 @@ func startDaemonVirola(t *testing.T, extra, virolaExtra string) *running {
 		t.Fatalf("start: %v\n%s", err, logs.String())
 	}
 	t.Cleanup(d.stop)
-	return &running{d: d, dc: dc, logs: logs, ldapsAddr: fmt.Sprintf("127.0.0.1:%d", lp), plainAddr: fmt.Sprintf("127.0.0.1:%d", pp), caDir: caDir}
+	return &running{d: d, dc: dc, logs: logs, ldapsAddr: fmt.Sprintf("127.0.0.1:%d", lp), plainAddr: fmt.Sprintf("127.0.0.1:%d", pp), caDir: caDir, path: path}
 }
 
 func (r *running) tlsConfig(t *testing.T) *tls.Config {

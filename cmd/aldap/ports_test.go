@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -52,4 +54,16 @@ func TestFreePort_Unique(t *testing.T) {
 		}
 		seen[p] = true
 	}
+}
+
+// ipcPath returns a socket path in a fresh short directory: t.TempDir can
+// exceed the 104/108-byte sun_path limit of unix sockets.
+func ipcPath(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("", "aldap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(d) })
+	return filepath.Join(d, "aldap.sock")
 }
