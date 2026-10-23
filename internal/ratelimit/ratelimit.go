@@ -85,6 +85,7 @@ type LockInfo struct {
 	Source   string    `json:"source"`
 	Failures int       `json:"failures"`
 	Profile  string    `json:"profile,omitempty"`
+	Reason   string    `json:"reason,omitempty"`
 }
 
 type lockEntry struct {
@@ -92,6 +93,7 @@ type lockEntry struct {
 	source   string
 	failures int
 	profile  string
+	reason   string
 }
 
 // window holds the timestamps of failures within a sliding window.
@@ -233,15 +235,30 @@ func normAccount(a string) string { return strings.ToLower(strings.TrimSpace(a))
 // LockIP implements the directory's Locker: a later expiry replaces an
 // earlier one; a lock event is emitted.
 func (l *Limiter) LockIP(ip string, until time.Time, source string) {
-	l.lock(TargetIP, ip, until, source, 0, "")
+	l.lock(TargetIP, ip, until, source, 0, "", "")
 }
 
 // LockAccount locks an account (API, TUI, IDS).
 func (l *Limiter) LockAccount(account string, until time.Time, source string) {
-	l.lock(TargetAccount, normAccount(account), until, source, 0, "")
+	l.lock(TargetAccount, normAccount(account), until, source, 0, "", "")
 }
 
-func (l *Limiter) lock(target, key string, until time.Time, source string, failures int, profile string) {
+// Lock locks an IP or an account with a free-text reason (API, TUI); it
+// reports false for an unknown target. An existing lock that lasts longer
+// is kept.
+func (l *Limiter) Lock(target, key string, until time.Time, source, reason string) bool {
+	switch target {
+	case TargetIP:
+		l.lock(TargetIP, key, until, source, 0, "", reason)
+	case TargetAccount:
+		l.lock(TargetAccount, normAccount(key), until, source, 0, "", reason)
+	default:
+		return false
+	}
+	return true
+}
+
+func (l *Limiter) lock(target, key string, until time.Time, source string, failures int, profile, reason string) {
 	if key == "" {
 		return
 	}
@@ -260,7 +277,7 @@ func (l *Limiter) lock(target, key string, until time.Time, source string, failu
 		l.log.Warn("ratelimit: lock table full, lock not recorded", "target", target)
 		return
 	}
-	m[key] = lockEntry{until: until, source: source, failures: failures, profile: profile}
+	m[key] = lockEntry{until: until, source: source, failures: failures, profile: profile, reason: reason}
 	// The failures are consumed by the lock: counting restarts after expiry.
 	if target == TargetIP {
 		delete(l.ipFails, key)
@@ -271,6 +288,9 @@ func (l *Limiter) lock(target, key string, until time.Time, source string, failu
 	l.mu.Unlock()
 	ev := events.Event{Event: events.Lock, Level: events.LevelMedium, Profile: profile, Failures: failures,
 		Data: map[string]any{"target": target, "key": key, "until": until.UTC().Format(time.RFC3339Nano), "source": source, "failures": failures}}
+	if reason != "" {
+		ev.Data["reason"] = reason
+	}
 	if target == TargetIP {
 		ev.ClientIP = key
 	} else {
@@ -350,7 +370,7 @@ func (l *Limiter) Locks() []LockInfo {
 	for target, m := range map[string]map[string]lockEntry{TargetIP: l.ipLocks, TargetAccount: l.acctLocks} {
 		for k, e := range m {
 			if now.Before(e.until) {
-				out = append(out, LockInfo{Target: target, Key: k, Until: e.until, Source: e.source, Failures: e.failures, Profile: e.profile})
+				out = append(out, LockInfo{Target: target, Key: k, Until: e.until, Source: e.source, Failures: e.failures, Profile: e.profile, Reason: e.reason})
 			}
 		}
 	}
@@ -659,10 +679,10 @@ func (p *Policy) PostBind(ip, account, pwHash string, ok bool, reason string, el
 	now := p.l.now()
 	ipCount, acctCount, delayN, p95 := p.recordFailure(ip, acct, pwHash, reason, now)
 	if ipCount >= p.cfg.IP.MaxFailures && p.cfg.IP.MaxFailures > 0 {
-		p.l.lock(TargetIP, ip, now.Add(p.cfg.IP.LockDuration.D()), SourceRatelimit, ipCount, p.profile)
+		p.l.lock(TargetIP, ip, now.Add(p.cfg.IP.LockDuration.D()), SourceRatelimit, ipCount, p.profile, "")
 	}
 	if acctCount >= p.cfg.Account.MaxFailures && p.cfg.Account.MaxFailures > 0 {
-		p.l.lock(TargetAccount, acct, now.Add(p.cfg.Account.LockDuration.D()), SourceRatelimit, acctCount, p.profile)
+		p.l.lock(TargetAccount, acct, now.Add(p.cfg.Account.LockDuration.D()), SourceRatelimit, acctCount, p.profile, "")
 	}
 	return p.failureDelay(delayN, p95, elapsed)
 }

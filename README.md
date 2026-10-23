@@ -16,6 +16,6 @@ LDAP proxy with a virtual directory, brute-force protection and IDS telemetry. S
 - `TASKS.md` — implementation stages with acceptance criteria
 - `TESTING.md` — test strategy and mandatory scenarios
 - `CLAUDE.md` — rules for the implementing agent
-- `docs/openapi.yaml`, `docs/events.schema.json` — API and event contracts
+- `docs/openapi.yaml`, `docs/events.schema.json` — API and event contracts; `docs/api.md` — API, IPC, tokens, SSE, `PUT /v1/config`
 
 License: MIT.

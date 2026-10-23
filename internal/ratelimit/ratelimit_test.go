@@ -442,3 +442,22 @@ func TestWindowBucketLatency(t *testing.T) {
 		t.Errorf("p95 = %v", p)
 	}
 }
+
+func TestLimiter_LockWithReason(t *testing.T) {
+	l, _, ev, cl := newTest(t, nil)
+	until := cl.now().Add(time.Hour)
+	if !l.Lock(TargetIP, "10.0.0.7", until, SourceAPI, "ticket 42") || !l.Lock(TargetAccount, " JDoe ", until, SourceAPI, "") {
+		t.Fatal("lock refused")
+	}
+	if l.Lock("host", "x", until, SourceAPI, "") {
+		t.Error("unknown target accepted")
+	}
+	locks := l.Locks()
+	if len(locks) != 2 || locks[1].Key != "10.0.0.7" || locks[1].Reason != "ticket 42" || locks[0].Key != "jdoe" || locks[0].Source != SourceAPI {
+		t.Fatalf("locks = %+v", locks)
+	}
+	if ev.count(events.Lock, func(e events.Event) bool { return e.Data["reason"] == "ticket 42" && e.ClientIP == "10.0.0.7" }) != 1 {
+		t.Error("lock event without reason")
+	}
+	ev.check(t)
+}

@@ -130,3 +130,12 @@ results_total, denied, duration_ms, bytes_in, bytes_out, fingerprint}`.
 `aldap_cert_expiry_seconds{listener}`, `aldap_events_total`,
 `aldap_events_dropped_total`, `aldap_build_info`. The registry is served by
 `/metrics` from Stage 7.
+
+## Management API (`internal/api`)
+
+See [`api.md`](api.md). Security-relevant points: constant-time token check over SHA-256 hashes, no
+token values kept in memory; `admin` implies all scopes; `allow_cidrs` per token; per-client rate limit;
+TLS mandatory beyond loopback (validated in the configuration and on the bound address at start); IPC
+socket `0600`, never reachable with wider permissions; `api_call` for every `locks:write`/`admin` call,
+refused ones included; `GET /v1/config` masks inline secrets; `PUT /v1/config` never leaves a half-written
+file (atomic rename) and keeps a backup of the previous one.

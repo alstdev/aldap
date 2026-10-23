@@ -3,6 +3,13 @@ info:
   title: ALDAP Management API
   version: "1.0"
   license: { name: MIT }
+  description: |
+    Bearer tokens ([[api.token]]) carry scopes; admin implies every scope. The IPC
+    socket ([server].ipc_socket, unix 0600) needs no token and acts as admin.
+    Every call to a locks:write or admin endpoint, refused ones included, emits
+    api_call{method, path, token_name, client_ip, status}. Errors are {error, code}.
+    401 (no or unknown token), 403 (insufficient_scope, forbidden_source) and
+    429 (rate_limit_rps per client address) apply to every non-public operation.
 servers:
   - url: https://127.0.0.1:8636
 security:
@@ -27,14 +34,15 @@ components:
         failures: { type: integer }
         source: { type: string, enum: [ratelimit, ids, api, honeytoken, tui] }
         reason: { type: string }
+        profile: { type: string }
     LockRequest:
       type: object
       required: [target, key]
       properties:
         target: { type: string, enum: [ip, account] }
         key: { type: string }
-        duration: { type: string, description: "Go duration, default 15m" }
-        reason: { type: string }
+        duration: { type: string, description: "Go duration, default 15m, at most 8760h" }
+        reason: { type: string, maxLength: 512 }
     Indicator:
       type: object
       required: [target, key, score, reasons, first_seen, last_seen]
@@ -43,6 +51,7 @@ components:
         key: { type: string }
         score: { type: number }
         reasons: { type: array, items: { type: string } }
+        hits: { type: object, additionalProperties: { type: integer } }
         first_seen: { type: string, format: date-time }
         last_seen: { type: string, format: date-time }
         locked: { type: boolean }
@@ -63,6 +72,8 @@ components:
         version: { type: string }
         uptime_s: { type: integer }
         lockdown: { type: boolean }
+        learning: { type: boolean }
+        events_seq: { type: integer }
         profiles: { type: array, items: { type: string } }
         upstreams:
           type: object
@@ -79,9 +90,11 @@ components:
         scope: { type: string, enum: [base, one, sub], default: sub }
         filter: { type: string }
         attrs: { type: array, items: { type: string } }
+        size_limit: { type: integer, minimum: 0 }
     TestResponse:
       type: object
       properties:
+        result_code: { type: integer }
         entries:
           type: array
           items:
@@ -89,9 +102,18 @@ components:
             properties:
               dn: { type: string }
               attrs: { type: object, additionalProperties: { type: array, items: { type: string } } }
+        denied_attrs: { type: array, items: { type: string } }
         denied_terms: { type: array, items: { type: string } }
-        upstream_queries: { type: array, items: { type: string } }
-        effective_filter: { type: string }
+        upstream_queries: { type: integer, description: directory searches run }
+        effective_filter: { type: string, description: filter sent to the upstream }
+        post_filter: { type: string, description: part evaluated locally }
+        honeytoken: { type: string }
+        duration_ms: { type: number }
+    ApplyResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        backup: { type: string, description: "path of aldap.toml.bak.<ts>" }
   responses:
     Err:
       description: Error
@@ -108,8 +130,9 @@ paths:
       responses: { "200": { description: ready }, "503": { description: not ready } }
   /metrics:
     get:
-      description: Prometheus metrics. Requires status:read unless api.metrics.public=true.
-      responses: { "200": { description: text/plain exposition } }
+      x-scope: status:read
+      description: Prometheus metrics. Requires status:read unless api.metrics.public=true; 404 with api.metrics.enabled=false.
+      responses: { "200": { description: text/plain exposition }, "404": { $ref: "#/components/responses/Err" } }
   /v1/status:
     get:
       x-scope: status:read
@@ -131,22 +154,34 @@ paths:
     post:
       x-scope: locks:write
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/LockRequest" } } } }
-      responses: { "201": { description: created }, "400": { $ref: "#/components/responses/Err" } }
+      responses:
+        "201": { description: created, content: { application/json: { schema: { $ref: "#/components/schemas/Lock" } } } }
+        "400": { $ref: "#/components/responses/Err" }
+        "503": { $ref: "#/components/responses/Err" }
   /v1/locks/{target}/{key}:
     delete:
       x-scope: locks:write
       parameters:
         - { name: target, in: path, required: true, schema: { type: string, enum: [ip, account] } }
         - { name: key, in: path, required: true, schema: { type: string } }
-      responses: { "204": { description: unlocked }, "404": { $ref: "#/components/responses/Err" } }
+      responses: { "204": { description: unlocked }, "400": { $ref: "#/components/responses/Err" }, "404": { $ref: "#/components/responses/Err" } }
   /v1/indicators:
     get:
       x-scope: locks:read
       parameters:
         - { name: format, in: query, schema: { type: string, enum: [json, stix-lite, plain], default: json } }
-        - { name: min_score, in: query, schema: { type: number } }
+        - { name: min_score, in: query, schema: { type: number, minimum: 0 } }
+      description: |
+        json — array of Indicator; stix-lite — STIX 2.1 bundle of indicator objects only
+        (deterministic ids, confidence = min(100, score)); plain — tab-separated
+        "target key score reasons locked" lines with a comment header.
       responses:
-        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Indicator" } } } } }
+        "200":
+          description: OK
+          content:
+            application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Indicator" } } }
+            text/plain: { schema: { type: string } }
+        "400": { $ref: "#/components/responses/Err" }
   /v1/events:
     get:
       x-scope: events:read
@@ -156,33 +191,52 @@ paths:
         - { name: types, in: query, schema: { type: string }, description: "comma-separated event types" }
       responses:
         "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Event" } } } } }
+        "400": { $ref: "#/components/responses/Err" }
   /v1/events/stream:
     get:
       x-scope: events:read
-      description: Server-Sent Events. Supports Last-Event-ID (= seq).
-      responses: { "200": { description: text/event-stream } }
+      description: |
+        Server-Sent Events: "id: <seq>", "event: <type>", "data: <record JSON>"; a ": ping"
+        comment every 15 s. Resumes after Last-Event-ID (= seq) or ?since=, from the ring buffer.
+      parameters:
+        - { name: Last-Event-ID, in: header, schema: { type: integer } }
+        - { name: since, in: query, schema: { type: integer } }
+        - { name: types, in: query, schema: { type: string } }
+      responses: { "200": { description: text/event-stream }, "400": { $ref: "#/components/responses/Err" } }
   /v1/lockdown:
     post:
       x-scope: locks:write
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [state], properties: { state: { type: string, enum: [on, off] } } } } } }
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { lockdown: { type: boolean }, source: { type: string } } } } } }
+        "400": { $ref: "#/components/responses/Err" }
   /v1/config:
     get:
       x-scope: admin
       responses: { "200": { description: "TOML with secrets masked", content: { application/toml: {} } } }
     put:
       x-scope: admin
+      description: |
+        Validated in memory first (400, file untouched). Then the previous file is copied
+        to aldap.toml.bak.<ts>, the new one written atomically (.tmp + rename) and reloaded;
+        when the reload fails the previous file is restored and the running configuration kept.
       requestBody: { required: true, content: { application/toml: {} } }
-      responses: { "200": { description: applied }, "400": { $ref: "#/components/responses/Err" } }
+      responses:
+        "200": { description: applied, content: { application/json: { schema: { $ref: "#/components/schemas/ApplyResult" } } } }
+        "400": { $ref: "#/components/responses/Err" }
+        "409": { $ref: "#/components/responses/Err" }
+        "413": { $ref: "#/components/responses/Err" }
+        "500": { $ref: "#/components/responses/Err" }
   /v1/reload:
     post:
       x-scope: admin
-      responses: { "200": { description: reloaded }, "400": { $ref: "#/components/responses/Err" } }
+      responses: { "200": { description: reloaded }, "400": { $ref: "#/components/responses/Err" }, "500": { $ref: "#/components/responses/Err" } }
   /v1/profiles/{name}/sync:
     post:
       x-scope: admin
       parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
-      responses: { "202": { description: sync started } }
+      description: Replica sync (Stage 9); 409 for a profile without cache.mode = replica.
+      responses: { "202": { description: sync started }, "404": { $ref: "#/components/responses/Err" }, "409": { $ref: "#/components/responses/Err" }, "501": { $ref: "#/components/responses/Err" } }
   /v1/profiles/{name}/test:
     post:
       x-scope: admin
@@ -190,9 +244,12 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/TestRequest" } } } }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/TestResponse" } } } }
+        "400": { $ref: "#/components/responses/Err" }
+        "404": { $ref: "#/components/responses/Err" }
   /v1/baseline/{profile}/learn:
     post:
       x-scope: admin
       parameters: [{ name: profile, in: path, required: true, schema: { type: string } }]
-      requestBody: { content: { application/json: { schema: { type: object, properties: { duration: { type: string } } } } } }
-      responses: { "202": { description: learning } }
+      description: Restarts baseline learning; the baseline window is process-wide (all profiles).
+      requestBody: { content: { application/json: { schema: { type: object, properties: { duration: { type: string, description: "default 24h, at most 720h" } } } } } }
+      responses: { "202": { description: learning }, "400": { $ref: "#/components/responses/Err" }, "404": { $ref: "#/components/responses/Err" } }

@@ -1,0 +1,110 @@
+# Management API, IPC and metrics
+
+Contract: [`openapi.yaml`](openapi.yaml) (normative; `TestOpenAPIRoutes` checks that the routes of
+`internal/api` and the file match in both directions, scopes included). Implementation: `internal/api`,
+wiring in `cmd/aldap/control.go`.
+
+## Listeners
+
+| Listener | When | Authentication |
+|---|---|---|
+| IPC socket `[server].ipc_socket` | always (unix; Windows: see below) | none, acts with scope `admin`; file mode `0600` |
+| API `[api].listen` | `[api].enabled = true` | `Authorization: Bearer <token>` |
+| Metrics `[api.metrics].listen` | `metrics.enabled` and a separate address | `status:read`, or none with `metrics.public = true` |
+
+- **TLS beyond loopback is mandatory.** `aldap check` refuses a non-loopback `listen` without `tls.builtin`
+  or `tls.cert/key`, and at start the daemon checks the *bound* address again (`api.CheckTransport`):
+  `0.0.0.0`, `::` or a host name that resolves elsewhere without TLS → the daemon does not start.
+- `tls.builtin = true` issues the API certificate from the built-in CA (`[tls].ca_dir`), kept in memory;
+  `client_auth = "require"` + `client_ca` enables mTLS (needs TLS).
+- The IPC socket is bound under a temporary name, set to `0600` and renamed into place, so it is never
+  reachable with wider permissions. A stale socket of a crashed process is replaced; a live one or a
+  regular file at the path is a start error.
+- **Windows:** named pipes are not implemented yet (BLOCKED, `docs/DECISIONS.md`): the daemon logs a
+  warning and `aldapctl` has to use `--url` with a token.
+
+## Tokens and scopes
+
+`[[api.token]]`: `name`, `token` / `token_file` / `token_env` (≥ 32 bytes), `scopes`, `allow_cidrs`.
+
+- Scopes: `events:read`, `locks:read`, `locks:write`, `status:read`, `admin`; **`admin` implies every scope**.
+- Comparison is constant-time: the presented token is hashed (SHA-256) and compared with every
+  configured token hash with `crypto/subtle`, without an early exit. Token values are not kept in memory.
+- Answers: no or unknown token → `401` + `WWW-Authenticate: Bearer`; source outside `allow_cidrs` →
+  `403 forbidden_source`; missing scope → `403 insufficient_scope`.
+- `rate_limit_rps` is a token bucket per client address (`429` + `Retry-After: 1`); `0` disables it.
+  The IPC socket is not limited.
+- Every call to a `locks:write` or `admin` endpoint, refused ones included, emits
+  `api_call{method, path, token_name, client_ip, status}` (level `medium` for status ≥ 400). IPC calls
+  carry `token_name = "ipc"`, `client_ip = "local"`.
+- Tokens, scopes, CIDRs, the rate limit and the metrics settings follow a reload; `listen`, `tls`,
+  `client_auth`, `metrics.listen` and `ipc_socket` take effect after a restart (a warning is logged).
+
+## Endpoints
+
+All answers are JSON except `GET /v1/config` (`application/toml`), `/metrics` (Prometheus text),
+`/v1/indicators?format=plain` (`text/plain`) and the SSE stream. Errors: `{"error": "...", "code": "..."}`.
+
+| Endpoint | Source of the data |
+|---|---|
+| `GET /v1/status`, `/v1/upstreams`, `/v1/profiles` | current daemon (profiles without secrets), `Limiter`, `ids.Engine`, `Bus.Seq` |
+| `GET/POST /v1/locks`, `DELETE /v1/locks/{target}/{key}` | `ratelimit.Limiter` (`source = api`, optional `reason`) |
+| `POST /v1/lockdown` | `Limiter.SetLockdown(…, "api")` |
+| `GET /v1/indicators` | `ids.Engine.Indicators` + active locks |
+| `GET /v1/events` | `Bus.Since(since)`, then `types` filter and `limit` (≤ 10000) |
+| `GET /v1/events/stream` | `Bus.Subscribe` + `Bus.Since(Last-Event-ID)` |
+| `GET/PUT /v1/config`, `POST /v1/reload` | the configuration file and the serve loop |
+| `POST /v1/profiles/{name}/test` | `vdir.Directory.Test` (same pipeline as `aldap check --as-client`) |
+| `POST /v1/profiles/{name}/sync` | replica cache (Stage 9): `409 not_replica` / `501` until then |
+| `POST /v1/baseline/{profile}/learn` | `ids.Engine.Learn` (the baseline window is process-wide) |
+| `GET /metrics` | `metrics.Handler` |
+| `GET /healthz`, `/readyz` | process alive; every `proxy` profile has an upstream server `up` |
+
+### Locks
+
+`POST /v1/locks {"target": "ip"|"account", "key": "...", "duration": "1h", "reason": "..."}` → `201` with the
+lock. IP keys are stored canonically (`::ffff:192.0.2.7` → `192.0.2.7`), accounts lower-case; `duration`
+defaults to `15m`, at most `8760h`. An existing lock that lasts longer is kept. `DELETE` → `204` or `404`.
+
+### Events and SSE
+
+`GET /v1/events?since=<seq>&limit=1000&types=a,b` returns the records with `seq > since` from the ring
+buffer (`[events].buffer_size`).
+
+`GET /v1/events/stream` sends every record as
+
+```
+id: <seq>
+event: <type>
+data: <aldap.event.v1 JSON>
+
+```
+
+and a `: ping` comment every 15 s. A client that reconnects with `Last-Event-ID: N` (or `?since=N`) gets
+`N+1…` from the ring buffer first, then live records, without gaps or duplicates. When the client lags and
+its queue overflows, the missing records are read back from the ring buffer by `seq`. Records older than
+the buffer are lost; compare the first `id` with `N+1` to detect that.
+
+### Indicators
+
+`?format=json` (default) — `[{target, key, score, reasons, hits, first_seen, last_seen, locked}]`;
+`?format=stix-lite` — a STIX 2.1 bundle of `indicator` objects only (deterministic ids per key, `pattern`
+`[ipv4-addr:value = '…']` / `[ipv6-addr:…]` / `[user-account:account_login = '…']`,
+`confidence = min(100, score)`, `x_aldap_*` extensions); `?format=plain` — tab-separated
+`target key score reasons locked` lines after a `#` header. `min_score` filters.
+
+### Configuration
+
+- `GET /v1/config` — the effective configuration (file, includes, `ALDAP_*`, defaults) as TOML; every
+  inline secret is `"***"`, so the output is not a drop-in replacement for files with inline secrets.
+- `PUT /v1/config` (TOML body, ≤ 4 MiB):
+  1. the body is loaded and validated in memory as if it were the file (includes and environment
+     apply, strict file checks) → `400 invalid_config`, **the file is not touched**;
+  2. the current file is copied to `aldap.toml.bak.<UTC ts>` (same mode, never overwritten — a suffix
+     `.1`, `.2` … is added; backups are not pruned);
+  3. the new file is written atomically (temporary file in the same directory, `fsync`, rename);
+  4. reload; when it fails (e.g. a port in use) the previous file is restored atomically and the
+     previous configuration keeps serving → `500`, the error names the cause.
+  The answer is `{"ok": true, "backup": "<path>"}`. Requests are serialized. `409 no_config_file` when the
+  configuration comes from the environment only.
+- `POST /v1/reload` — same as `SIGHUP`; `400 invalid_config` keeps the running configuration.
