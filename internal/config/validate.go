@@ -8,11 +8,13 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"text/template"
+	"text/template/parse"
 	"time"
 
 	"github.com/alstdev/aldap/internal/secret"
@@ -563,10 +565,11 @@ func (v Validator) validateProfileDirectory(path string, p *Profile, rep *Report
 			rep.errorf(fmt.Sprintf("%s.attrs.allow[%d]", path, i), "'%s' is not allowed; list attributes explicitly", t)
 		}
 	}
-	for k, tpl := range p.Attrs.Computed {
-		if _, err := template.New(k).Parse(tpl); err != nil {
-			rep.errorf(path+".attrs.computed."+k, "%v", err)
-		}
+	for _, k := range sortedKeys(p.Attrs.Computed) {
+		checkProfileTemplate(rep, path+".attrs.computed."+k, p.Attrs.Computed[k])
+	}
+	for _, k := range sortedKeys(p.HoneytokenTemplate) {
+		checkProfileTemplate(rep, path+".honeytoken_template."+k, p.HoneytokenTemplate[k])
 	}
 	if p.RDNAttr == "" {
 		rep.errorf(path+".rdn_attr", "required")
@@ -942,6 +945,96 @@ func checkNotifyTemplate(rep *Report, path, text string) {
 	}
 	if _, err := template.New(path).Funcs(funcs).Parse(text); err != nil {
 		rep.errorf(path, "%v", err)
+	}
+}
+
+// checkProfileTemplate parses a profile attribute template with stubs of
+// the functions internal/profile provides; a constant regexReplace pattern
+// must compile.
+func checkProfileTemplate(rep *Report, path, text string) {
+	funcs := template.FuncMap{}
+	for _, name := range ProfileTemplateFuncs {
+		funcs[name] = func(...any) any { return nil }
+	}
+	tpl, err := template.New(path).Funcs(funcs).Parse(text)
+	if err != nil {
+		rep.errorf(path, "%v", err)
+		return
+	}
+	walkTemplate(tpl.Root, func(n parse.Node) {
+		args := regexReplaceArgs(n)
+		if len(args) == 0 {
+			return
+		}
+		if len(args) != 3 {
+			rep.errorf(path, "regexReplace takes pattern, replacement and value, got %d arguments", len(args))
+			return
+		}
+		if s, ok := args[0].(*parse.StringNode); ok {
+			if _, err := regexp.Compile(s.Text); err != nil {
+				rep.errorf(path, "regexReplace pattern: %v", err)
+			}
+		}
+	})
+}
+
+// regexReplaceArgs returns the arguments of a regexReplace command node
+// (including a piped value as the last one), or nil.
+func regexReplaceArgs(n parse.Node) []parse.Node {
+	pipe, ok := n.(*parse.PipeNode)
+	if !ok {
+		return nil
+	}
+	var out []parse.Node
+	for i, cmd := range pipe.Cmds {
+		if len(cmd.Args) == 0 {
+			continue
+		}
+		if id, ok := cmd.Args[0].(*parse.IdentifierNode); ok && id.Ident == "regexReplace" {
+			out = append(out, cmd.Args[1:]...)
+			if i > 0 {
+				out = append(out, pipe.Cmds[i-1])
+			}
+			return out
+		}
+	}
+	return nil
+}
+
+// walkTemplate calls fn on every pipeline of a template tree.
+func walkTemplate(n parse.Node, fn func(parse.Node)) {
+	switch n := n.(type) {
+	case *parse.ListNode:
+		if n == nil {
+			return
+		}
+		for _, c := range n.Nodes {
+			walkTemplate(c, fn)
+		}
+	case *parse.ActionNode:
+		walkTemplate(n.Pipe, fn)
+	case *parse.PipeNode:
+		if n == nil {
+			return
+		}
+		fn(n)
+		for _, c := range n.Cmds {
+			for _, a := range c.Args {
+				walkTemplate(a, fn)
+			}
+		}
+	case *parse.IfNode:
+		walkTemplate(n.Pipe, fn)
+		walkTemplate(n.List, fn)
+		walkTemplate(n.ElseList, fn)
+	case *parse.RangeNode:
+		walkTemplate(n.Pipe, fn)
+		walkTemplate(n.List, fn)
+		walkTemplate(n.ElseList, fn)
+	case *parse.WithNode:
+		walkTemplate(n.Pipe, fn)
+		walkTemplate(n.List, fn)
+		walkTemplate(n.ElseList, fn)
 	}
 }
 

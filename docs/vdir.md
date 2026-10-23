@@ -53,7 +53,11 @@ matches never match. `(objectClass=*)` matches every entry.
   over a map of upstream attribute names → first value (missing → `""`).
   Functions: `or`, `printf` (built in), `lower`, `upper`, `trim`,
   `default DEF V`, `first V...`, `join SEP V...`, `regexReplace PATTERN REPL V`
-  (`$1` groups). The template's `.Field` references are its dependencies
+  (`$1` groups). `aldap check` parses every `attrs.computed` and
+  `honeytoken_template` value with exactly these functions: an unknown
+  function, a syntax error, a constant `regexReplace` pattern that does not
+  compile or a `regexReplace` call without three arguments is an error at
+  the key's path. The template's `.Field` references are its dependencies
   and are fetched automatically. A template error drops the attribute for
   that entry (debug log). Computed names are client-visible without being
   listed in `attrs.allow`; a computed name that is also allowed overrides

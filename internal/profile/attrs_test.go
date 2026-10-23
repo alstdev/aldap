@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -168,5 +169,18 @@ func TestCompile_Stage5(t *testing.T) {
 	}
 	if given, sn := splitName("solo"); given != "Solo" || sn != "User" {
 		t.Error(given, sn)
+	}
+}
+
+func TestTemplateFuncsInSync(t *testing.T) {
+	names := make([]string, 0, len(templateFuncs))
+	for k := range templateFuncs {
+		names = append(names, k)
+	}
+	slices.Sort(names)
+	want := slices.Clone(config.ProfileTemplateFuncs)
+	slices.Sort(want)
+	if !slices.Equal(names, want) {
+		t.Errorf("template funcs %v, config.ProfileTemplateFuncs %v", names, want)
 	}
 }

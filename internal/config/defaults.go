@@ -29,6 +29,13 @@ var NotifyLockAliases = map[string]string{"lock_account": "account", "lock_ip": 
 // list equal to the implementation.
 var NotifyTemplateFuncs = []string{"get", "join", "json", "md", "html", "upper", "lower", "default"}
 
+// ProfileTemplateFuncs names the functions available in profile templates
+// (attrs.computed and honeytoken_template, internal/profile) besides the
+// text/template built-ins (or, printf, …); the validator parses templates
+// with stubs of these names. TestTemplateFuncsInSync (internal/profile)
+// keeps the list equal to the implementation.
+var ProfileTemplateFuncs = []string{"lower", "upper", "trim", "default", "first", "join", "regexReplace"}
+
 // DefaultChannelEvents is the event list of a notification channel without an explicit one.
 var DefaultChannelEvents = []string{
 	"attack_start", "attack_summary", "attack_end", "lock_account",
