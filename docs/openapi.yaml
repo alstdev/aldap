@@ -235,8 +235,8 @@ paths:
     post:
       x-scope: admin
       parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
-      description: Replica sync (Stage 9); 409 for a profile without cache.mode = replica.
-      responses: { "202": { description: sync started }, "404": { $ref: "#/components/responses/Err" }, "409": { $ref: "#/components/responses/Err" }, "501": { $ref: "#/components/responses/Err" } }
+      description: Asks the replica for a sync now (the outcome is the replica_synced or replica_sync_failed event); 409 for a profile without cache.mode = replica.
+      responses: { "202": { description: sync started }, "404": { $ref: "#/components/responses/Err" }, "409": { $ref: "#/components/responses/Err" } }
   /v1/profiles/{name}/test:
     post:
       x-scope: admin

@@ -484,6 +484,9 @@ func (v Validator) validateProfile(path, name string, p *Profile, c *Config, rep
 	}
 	atLeast(rep, path+".nested_depth", p.NestedDepth, 1)
 	v.validateProfileCache(path, &p.Cache, rep)
+	if p.Cache.Mode != "none" && p.Mode != "" && p.Mode != "proxy" {
+		rep.warnf(path+".cache.mode", "ignored for mode = %s (no upstream to cache)", p.Mode)
+	}
 	v.validateProfileLimits(path, &p.Limits, rep)
 	p.Ratelimit.validate(path+".ratelimit", rep)
 	v.checkFilter(rep, path+".shadow.filter", p.Shadow.Filter)

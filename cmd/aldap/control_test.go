@@ -78,11 +78,7 @@ func TestController_Views(t *testing.T) {
 	if err := ctl.Sync(context.Background(), "virola"); !errors.Is(err, api.ErrNotReplica) {
 		t.Errorf("sync non-replica: %v", err)
 	}
-	r.d.cfg.Profiles["virola"].Cache.Mode = "replica"
-	if err := ctl.Sync(context.Background(), "virola"); !errors.Is(err, api.ErrNotImplemented) {
-		t.Errorf("sync replica: %v", err)
-	}
-	r.d.cfg.Profiles["virola"].Cache.Mode = "none"
+	// A replica profile is synced on request: cmd/aldap/stage9_test.go.
 	b, err := ctl.ConfigTOML()
 	if err != nil || !strings.Contains(string(b), "[profile.virola]") || strings.Contains(string(b), clientPassword) {
 		t.Errorf("config toml: %v %v %v", err, strings.Contains(string(b), "[profile.virola]"), strings.Contains(string(b), clientPassword))

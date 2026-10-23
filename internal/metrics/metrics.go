@@ -144,6 +144,18 @@ func (m *Metrics) SetUpstreamUp(upstream, server string, up bool) {
 	m.UpstreamUp.WithLabelValues(upstream, server).Set(v)
 }
 
+// SetCache publishes the cached entries of a profile and, for a replica,
+// the age of its copy (negative age = no replica gauge).
+func (m *Metrics) SetCache(profile string, entries int, replicaAge time.Duration) {
+	if m == nil {
+		return
+	}
+	m.CacheEntries.WithLabelValues(profile).Set(float64(entries))
+	if replicaAge >= 0 {
+		m.ReplicaAge.WithLabelValues(profile).Set(replicaAge.Seconds())
+	}
+}
+
 // Event counts an emitted event.
 func (m *Metrics) Event(kind string) {
 	if m == nil {

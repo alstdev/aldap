@@ -50,17 +50,27 @@ type membership struct {
 	groups     []*groupData
 	byName     map[string]*groupData
 	userGroups map[string][]string // user key → virtual group DNs, sorted
+	// rdns counts the distinct users per lower-cased RDN value over the
+	// set the virtual DNs were decided on (RDN collision suffix).
+	rdns map[string]int
 }
 
 // membership returns the current snapshot, computing it when missing or
 // expired. Computation is serialized; a failure is not cached.
 func (d *Directory) membership(ctx context.Context) (*membership, error) {
+	if d.o.Replica != nil {
+		rd, err := d.replicaData()
+		if err != nil {
+			return nil, err
+		}
+		return rd.mem, nil
+	}
 	d.memMu.Lock()
 	defer d.memMu.Unlock()
 	if d.mem != nil && d.now().Before(d.mem.expires) {
 		return d.mem, nil
 	}
-	m, err := d.computeMembership(ctx)
+	m, err := d.computeMembership(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -75,9 +85,16 @@ func (d *Directory) InvalidateMembership() {
 	d.memMu.Unlock()
 }
 
-func (d *Directory) computeMembership(ctx context.Context) (*membership, error) {
-	m := &membership{expires: d.now().Add(d.rules.MembershipTTL), byName: map[string]*groupData{}, userGroups: map[string][]string{}}
+// computeMembership evaluates every group. RDN collisions are decided over
+// the members of all groups together with users (the whole replica; nil
+// otherwise).
+func (d *Directory) computeMembership(ctx context.Context, users []upstream.Entry) (*membership, error) {
+	m := &membership{expires: d.now().Add(d.rules.MembershipTTL), byName: map[string]*groupData{}, userGroups: map[string][]string{}, rdns: map[string]int{}}
 	all := map[string]*member{} // key → member, across groups (for RDN collisions)
+	for _, e := range users {
+		mb := d.newMember(e)
+		all[mb.key] = mb
+	}
 	sets := make([]map[string]*member, 0, len(d.rules.Groups()))
 	for _, g := range d.rules.Groups() {
 		set, err := d.groupMembers(ctx, g)
@@ -89,7 +106,7 @@ func (d *Directory) computeMembership(ctx context.Context) (*membership, error) 
 		}
 		sets = append(sets, set)
 	}
-	rdns := map[string]int{}
+	rdns := m.rdns
 	for _, mb := range all {
 		rdns[strings.ToLower(mb.rdn)]++
 	}
@@ -186,7 +203,7 @@ func (d *Directory) memberAttrs() []string {
 // searchAll runs one upstream search and returns its entries; a base that
 // does not exist (noSuchObject) yields none.
 func (d *Directory) searchAll(ctx context.Context, base string, scope upstream.Scope, f *ldapfilter.Filter) ([]upstream.Entry, error) {
-	r, err := d.up.Search(ctx, upstream.SearchRequest{Base: base, Scope: scope, Filter: f, Attrs: d.memberAttrs()})
+	r, err := d.src.Search(ctx, upstream.SearchRequest{Base: base, Scope: scope, Filter: f, Attrs: d.memberAttrs()})
 	if err != nil {
 		if ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
 			return nil, nil
@@ -233,7 +250,7 @@ func (d *Directory) walkGroup(ctx context.Context, groupDN string, depth int, se
 		return nil
 	}
 	seen[key] = true
-	r, err := d.up.Search(ctx, upstream.SearchRequest{Base: groupDN, Scope: upstream.ScopeBase, Filter: ldapfilter.True(), Attrs: []string{profile.AttrMember, "uniqueMember", "objectClass"}})
+	r, err := d.src.Search(ctx, upstream.SearchRequest{Base: groupDN, Scope: upstream.ScopeBase, Filter: ldapfilter.True(), Attrs: []string{profile.AttrMember, "uniqueMember", "objectClass"}})
 	if err != nil {
 		if ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
 			return nil
@@ -247,7 +264,7 @@ func (d *Directory) walkGroup(ctx context.Context, groupDN string, depth int, se
 			if seen[mkey] {
 				continue
 			}
-			probe, err := d.up.Search(ctx, upstream.SearchRequest{Base: mdn, Scope: upstream.ScopeBase, Filter: ldapfilter.True(), Attrs: []string{"objectClass", profile.AttrMember}})
+			probe, err := d.src.Search(ctx, upstream.SearchRequest{Base: mdn, Scope: upstream.ScopeBase, Filter: ldapfilter.True(), Attrs: []string{"objectClass", profile.AttrMember}})
 			if err != nil && !ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
 				return err
 			}

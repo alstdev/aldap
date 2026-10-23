@@ -70,8 +70,9 @@ matches never match. `(objectClass=*)` matches every entry.
 ## Virtual groups (SPEC §4.4)
 
 Membership of every group is computed together and cached for
-`cache.ttl` (default 60 s, whatever `cache.mode`), so `member` and
-`memberOf` agree within that window. Sources per group, every one
+`cache.ttl` (default 60 s, also for `cache.mode = none`), so `member` and
+`memberOf` agree within that window; with `cache.mode = replica` it is part
+of the synced copy (`docs/cache.md`). Sources per group, every one
 intersected with the profile `filter`/`exclude_filter`:
 
 | Source | Evaluation |

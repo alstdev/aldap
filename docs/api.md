@@ -58,7 +58,7 @@ All answers are JSON except `GET /v1/config` (`application/toml`), `/metrics` (P
 | `GET /v1/events/stream` | `Bus.Subscribe` + `Bus.Since(Last-Event-ID)` |
 | `GET/PUT /v1/config`, `POST /v1/reload` | the configuration file and the serve loop |
 | `POST /v1/profiles/{name}/test` | `vdir.Directory.Test` (same pipeline as `aldap check --as-client`) |
-| `POST /v1/profiles/{name}/sync` | replica cache (Stage 9): `409 not_replica` / `501` until then |
+| `POST /v1/profiles/{name}/sync` | asks the replica of the profile for a sync now: `202`; `404` unknown profile, `409 not_replica` without `cache.mode = replica`; the outcome is `replica_synced` / `replica_sync_failed` (`docs/cache.md`) |
 | `POST /v1/baseline/{profile}/learn` | `ids.Engine.Learn` (the baseline window is process-wide) |
 | `GET /metrics` | `metrics.Handler` |
 | `GET /healthz`, `/readyz` | process alive; every `proxy` profile has an upstream server `up` |

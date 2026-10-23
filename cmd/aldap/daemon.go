@@ -44,6 +44,7 @@ type runtimeState struct {
 	ids          *ids.Engine
 	metrics      *metrics.Metrics
 	notify       *notify.Notifier
+	caches       cacheSet
 	lockdownAuto atomic.Bool
 }
 
@@ -138,6 +139,7 @@ type servedProfile struct {
 	cfg       *config.Profile
 	tls       *tlsutil.Manager
 	dir       *vdir.Directory
+	cache     *profileCache
 	servers   []*listener.Server
 	addrs     []string
 	listeners []net.Listener
@@ -305,8 +307,17 @@ func (d *daemon) buildProfile(name string, pcfg *config.Profile) (*servedProfile
 	if !d.cfg.Intrusion.Honeytoken.Enabled {
 		honeyLock = 0
 	}
-	sp.dir = vdir.New(rules, up, vdir.Options{Logger: d.log, Events: d.events, Version: version, StartTLS: offersStartTLS,
-		Guard: guard, Observer: d.state.ids, HoneytokenLock: honeyLock, Metrics: d.state.metrics})
+	dopts := vdir.Options{Logger: d.log, Events: d.events, Version: version, StartTLS: offersStartTLS,
+		Guard: guard, Observer: d.state.ids, HoneytokenLock: honeyLock, Metrics: d.state.metrics}
+	if sp.cache = d.state.caches.get(name, pcfg, d.cfg.Upstreams[pcfg.Upstream], d.events, d.log); sp.cache != nil {
+		switch {
+		case sp.cache.ttl != nil:
+			dopts.Cache = sp.cache.ttl.Wrap(up)
+		case sp.cache.replica != nil:
+			dopts.Replica = sp.cache.replica
+		}
+	}
+	sp.dir = vdir.New(rules, up, dopts)
 	lcfg := listener.Config{
 		Profile: name, Transport: pcfg.Transport, StartTLSRequired: pcfg.StartTLSRequired, Handler: sp.dir, Fingerprints: d.state.ids, Metrics: d.state.metrics,
 		MaxRequestBytes: int64(pcfg.Limits.MaxRequestBytes), IdleTimeout: pcfg.Limits.IdleTimeout.D(),
@@ -458,7 +469,15 @@ func (d *daemon) start(ctx context.Context) error {
 				d.certLoop(ctx, sp.tls)
 			}()
 		}
+		if sp.cache != nil && sp.cache.replica != nil {
+			d.wg.Add(1)
+			go func() {
+				defer d.wg.Done()
+				sp.cache.replica.Run(ctx, sp.dir.SyncReplica)
+			}()
+		}
 	}
+	d.state.caches.commit(d.profiles)
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
@@ -498,6 +517,11 @@ func (d *daemon) sweepLoop(ctx context.Context) {
 		case now := <-t.C:
 			d.state.limiter.Sweep(now, window)
 			d.state.ids.Tick()
+			for _, sp := range d.profiles {
+				if sp.cache != nil {
+					sp.cache.sweep(sp.name, d.state.metrics)
+				}
+			}
 		}
 	}
 }

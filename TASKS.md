@@ -93,7 +93,7 @@
 
 ## Stage 9 — Кеш і репліка
 Читати: SPEC §5.1, §5.2; TESTING «Failover, кеш».
-- [ ] `internal/cache`: `ttl` (ключ, TTL, max_entries, stale_while_down), `replica` (повний sync, jitter, примусовий sync, `replica_age_seconds`), групи TTL для `none`.
+- [x] `internal/cache`: `ttl` (ключ, TTL, max_entries, stale_while_down), `replica` (повний sync, jitter, примусовий sync, `replica_age_seconds`), групи TTL для `none`.
 **КП:** тест stale при всіх upstream down; replica відповідає при вимкненому upstream; user bind у replica йде в upstream; інвалідaція при reload профілю.
 
 ## Stage 10 — `aldapctl` CLI + TUI

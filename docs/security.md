@@ -122,7 +122,7 @@ results_total, denied, duration_ms, bytes_in, bytes_out, fingerprint}`.
 
 `aldap_locks_active{target}` (refreshed by `Sweep`),
 `aldap_attack_active{kind}`, `aldap_binds_total{profile,result=ok|fail|blocked}`,
-`aldap_bind_duration_seconds`, `aldap_searches_total{profile,cache}`,
+`aldap_bind_duration_seconds`, `aldap_searches_total{profile,cache}` (`docs/cache.md`),
 `aldap_search_results`, `aldap_profile_cost`,
 `aldap_connections_active{profile}`,
 `aldap_upstream_queries_total{upstream,server,op,result}`,
