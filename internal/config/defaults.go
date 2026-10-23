@@ -44,7 +44,9 @@ var DefaultChannelEvents = []string{
 
 func d(v time.Duration) Duration { return Duration(v) }
 
-func defaultIPCSocket() string {
+// DefaultIPCSocket is the default [server].ipc_socket of the platform; aldapctl
+// dials it without reading the configuration.
+func DefaultIPCSocket() string {
 	if runtime.GOOS == "windows" {
 		return `\\.\pipe\aldap`
 	}
@@ -58,7 +60,7 @@ func Default() *Config {
 		Server: Server{
 			LogLevel:        "info",
 			LogFormat:       "text",
-			IPCSocket:       defaultIPCSocket(),
+			IPCSocket:       DefaultIPCSocket(),
 			ShutdownTimeout: d(30 * time.Second),
 			MaxConnections:  1024,
 		},

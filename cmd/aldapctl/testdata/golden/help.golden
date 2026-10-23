@@ -1,0 +1,68 @@
+aldapctl - control client of a running aldap (API over the IPC socket or TCP)
+
+Usage:
+  aldapctl [connection flags]                  interactive TUI (needs a terminal)
+  aldapctl [connection flags] <command> [args] [flags]
+
+Commands:
+  status                         version, uptime, lockdown, profiles and upstream states
+  upstreams                      upstream servers in detail
+  profiles                       profiles without secrets
+  locks                          active IP and account locks
+  unlock <ip|account>            remove a lock *
+  lock <ip|account>              lock an IP address or an account *
+  lockdown on|off                switch the global lockdown *
+  events                         buffered events; --follow streams new ones
+  indicators                     suspicious IPs and accounts with scores
+  reload                         reload the configuration file *
+  config get                     print the running configuration (secrets masked)
+  config set <file>              validate, back up, write and reload a configuration file *
+  config validate <file>         validate a configuration file on the daemon without applying it
+  test <profile>                 what a client would see for a search, with diagnostics
+  sync <profile>                 force a replica sync *
+  baseline learn <profile>       restart IDS baseline learning *
+  record start <profile>         start recording requests of a profile *
+  record stop <profile>          stop recording requests of a profile *
+  replay <file>                  replay recorded searches against a profile and compare
+  bundle                         support bundle: config without secrets, events, versions, health, metrics
+  tui                            interactive terminal UI (also: aldapctl without a command)
+  version                        print build information
+  help [command]                 print this help or the help of a command
+
+Connection flags (default: the local IPC socket, no token):
+  --socket PATH          IPC socket, a named pipe on Windows (default /run/aldap/aldap.sock); no token
+  --url URL              API over TCP: https://host:8636 (plain http on loopback only)
+  --token-file FILE      bearer token for --url; tokens are never taken on the command line
+  --ca-file FILE         CA certificates (PEM) for the API certificate (default: system roots)
+  --client-cert FILE     client certificate (PEM) for API mTLS, with --client-key
+  --client-key FILE      client key (PEM) for API mTLS
+  --timeout DURATION     timeout of one API call (default 30s)
+
+Command flags:
+  --account              treat the key as an account even if it looks like an IP address
+  --attrs LIST           attributes, comma separated
+  --base DN              search base (default: the profile's virtual base)
+  --events N             number of recent events in the bundle (default 10000)
+  --filter FILTER        LDAP filter (required), e.g. (uid=jdoe)
+  --follow               keep streaming new events (Ctrl+C stops); -f for short
+  --for DURATION         duration, e.g. 30m, 1h, 24h
+  --force                overwrite an existing output file
+  --format FMT           table (default), json, stix-lite or plain
+  --json                 print the API answer as JSON
+  --limit N              at most N events (1–10000)
+  --min-score N          only indicators with at least this score
+  --out FILE             output file
+  --profile NAME         profile to replay against (required)
+  --reason TEXT          reason stored with the lock
+  --scope SCOPE          base, one or sub (default sub)
+  --since SEQ            events after this sequence number
+  --size-limit N         size limit of the test search
+  --types LIST           event types, comma separated (default: all)
+  --yes                  confirm without a prompt (scripts); -y for short
+  --help, -h             help of a command (aldapctl <command> --help)
+
+* changes the daemon state: on a terminal aldapctl asks y/n first, otherwise
+  (scripts, pipes) the command runs only with --yes.
+
+Exit codes: 0 success, 1 error (API or connection), 2 usage error,
+3 not confirmed or interrupted.

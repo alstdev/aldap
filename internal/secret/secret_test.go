@@ -199,3 +199,10 @@ func TestResolver_DefaultsUseOS(t *testing.T) {
 		t.Fatalf("Default.Resolve: %q %v", v.Reveal(), err)
 	}
 }
+
+func TestInline_MarshalTextEmpty(t *testing.T) {
+	b, err := json.Marshal(struct{ P Inline }{""})
+	if err != nil || string(b) != `{"P":""}` {
+		t.Errorf("json = %s, err = %v", b, err)
+	}
+}

@@ -1,0 +1,7 @@
+aldap 1.4.0 (go1.26.10)  uptime 1h2m5s
+lockdown off  learning yes  locks 2  attacks 1  events seq 42
+profiles: app, virola
+
+UPSTREAM  SERVER                        STATE  FAILS  P50    P95    LAST ERROR
+ad        ldaps://dc1.corp.example:636  up     0      2.1ms  5.4ms  -
+ad        ldaps://dc2.corp.example:636  down   4      0.0ms  0.0ms  dial tcp: i/o timeout

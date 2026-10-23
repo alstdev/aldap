@@ -319,3 +319,42 @@ func TestServe_APIStartFailures(t *testing.T) {
 		t.Errorf("ipc occupied: exit %d\n%s", code, logs.String())
 	}
 }
+
+func TestController_ValidateConfigAndRecord(t *testing.T) {
+	ctl, _, path := testController(t, func() error { return nil })
+	orig, _ := os.ReadFile(path)
+	ctx := context.Background()
+	if err := ctl.ValidateConfig(ctx, []byte("[server]\nlog_level = \"loud\"\n")); !errors.Is(err, api.ErrInvalidConfig) {
+		t.Errorf("invalid: %v", err)
+	}
+	if err := ctl.ValidateConfig(ctx, orig); err != nil {
+		t.Errorf("valid: %v", err)
+	}
+	// The rendering of GET /v1/config loads back (unset secrets render
+	// empty); an inline secret it shows as "***" is refused instead of
+	// being stored as the password "***".
+	rendered, err := ctl.ConfigTOML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctl.ValidateConfig(ctx, rendered); err != nil {
+		t.Errorf("rendering does not validate: %v", err)
+	}
+	masked := string(rendered) + "\n[upstream.extra]\nservers = [\"ldaps://dc9.example.org:636\"]\nbind_dn = \"cn=svc\"\nbind_password = \"***\"\n"
+	if err := ctl.ValidateConfig(ctx, []byte(masked)); !errors.Is(err, api.ErrInvalidConfig) || !strings.Contains(err.Error(), "masked placeholder") {
+		t.Errorf("masked secret: %v", err)
+	}
+	if now, _ := os.ReadFile(path); string(now) != string(orig) {
+		t.Error("dry run changed the file")
+	}
+	if err := ctl.Record(ctx, "nope", true); !errors.Is(err, api.ErrNotFound) {
+		t.Errorf("record unknown: %v", err)
+	}
+	if err := ctl.Record(ctx, "virola", true); !errors.Is(err, api.ErrNotImplemented) {
+		t.Errorf("record: %v", err)
+	}
+	ctl.path = ""
+	if err := ctl.ValidateConfig(ctx, orig); !errors.Is(err, api.ErrNoConfigFile) {
+		t.Errorf("no file: %v", err)
+	}
+}

@@ -98,9 +98,9 @@
 
 ## Stage 10 — `aldapctl` CLI + TUI
 Читати: SPEC §7, §8; TESTING «Рівні».
-- [ ] CLI-команди §8 через API-клієнт (IPC/TCP).
-- [ ] TUI (Bubble Tea): вкладки, live events, locks unlock/lock, config view/validate/apply, підтвердження, `?`.
-- [ ] `bundle`, `record start/stop`, `replay`, `baseline learn`.
+- [x] CLI-команди §8 через API-клієнт (IPC/TCP).
+- [x] TUI (Bubble Tea): вкладки, live events, locks unlock/lock, config view/validate/apply, підтвердження, `?`.
+- [x] `bundle`, `record start/stop`, `replay`, `baseline learn`. (`record start/stop` → API `501` до рекордера Stage 11; формат `replay` — OPEN у DECISIONS.)
 **КП:** `go test` з `teatest`/модельними тестами на навігацію та unlock; CLI golden-тести виводу; `aldapctl --help` повний.
 
 ## Stage 11 — Record/replay, shadow

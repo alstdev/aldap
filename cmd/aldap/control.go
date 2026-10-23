@@ -170,6 +170,25 @@ func (c *controller) validate(body []byte) error {
 	return nil
 }
 
+// ValidateConfig implements api.Backend (PUT /v1/config?dry_run=true):
+// the checks of ApplyConfig without touching the file or the daemon.
+func (c *controller) ValidateConfig(_ context.Context, body []byte) error {
+	if c.path == "" {
+		return api.ErrNoConfigFile
+	}
+	return c.validate(body)
+}
+
+// Record implements api.Backend for POST /v1/profiles/{name}/record. The
+// recorder (internal/record) does not exist yet: a known profile answers
+// 501 (docs/DECISIONS.md «aldapctl record»).
+func (c *controller) Record(_ context.Context, profile string, _ bool) error {
+	if _, ok := c.daemon().cfg.Profiles[profile]; !ok {
+		return fmt.Errorf("profile %q: %w", profile, api.ErrNotFound)
+	}
+	return fmt.Errorf("request recording: %w", api.ErrNotImplemented)
+}
+
 // ApplyConfig implements api.Backend (SPEC §7 PUT /v1/config): validate in
 // memory, back the current file up as aldap.toml.bak.<ts>, write the new
 // one atomically, reload; a failed reload restores the previous file.

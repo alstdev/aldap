@@ -1,0 +1,12 @@
+Usage: aldapctl lock <ip|account> [--for DURATION] [--reason TEXT] [--account] [--yes]
+
+Lock an IP address or an account.
+Changes the daemon state: asks y/n on a terminal, needs --yes otherwise.
+
+Flags:
+  --for DURATION         duration, e.g. 30m, 1h, 24h
+  --reason TEXT          reason stored with the lock
+  --account              treat the key as an account even if it looks like an IP address
+  --yes                  confirm without a prompt (scripts); -y for short
+
+Connection flags: --socket, --url, --token-file, --ca-file, --client-cert, --client-key, --timeout (aldapctl help).

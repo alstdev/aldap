@@ -207,6 +207,10 @@ func (v Validator) checkSecret(rep *Report, path string, src secret.Source, requ
 			rep.errorf(path, "required: set %s_file, %s_env or %s", path, path, path)
 		}
 	case "inline":
+		if src.Inline.Reveal() == secret.Redacted {
+			rep.errorf(path, "is the masked placeholder %q of a rendered configuration: give the secret or use %s_file / %s_env", secret.Redacted, path, path)
+			return
+		}
 		rep.warnf(path, "inline secret; prefer %s_file or %s_env", path, path)
 	case "file":
 		warns, err := v.Secrets.Probe(src)

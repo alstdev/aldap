@@ -59,6 +59,7 @@ All answers are JSON except `GET /v1/config` (`application/toml`), `/metrics` (P
 | `GET/PUT /v1/config`, `POST /v1/reload` | the configuration file and the serve loop |
 | `POST /v1/profiles/{name}/test` | `vdir.Directory.Test` (same pipeline as `aldap check --as-client`) |
 | `POST /v1/profiles/{name}/sync` | asks the replica of the profile for a sync now: `202`; `404` unknown profile, `409 not_replica` without `cache.mode = replica`; the outcome is `replica_synced` / `replica_sync_failed` (`docs/cache.md`) |
+| `POST /v1/profiles/{name}/record` | `{"state": "on"\|"off"}`; `404` unknown profile; `501 not_implemented` until the recorder (`internal/record`, Stage 11) exists |
 | `POST /v1/baseline/{profile}/learn` | `ids.Engine.Learn` (the baseline window is process-wide) |
 | `GET /metrics` | `metrics.Handler` |
 | `GET /healthz`, `/readyz` | process alive; every `proxy` profile has an upstream server `up` |
@@ -99,7 +100,12 @@ the buffer are lost; compare the first `id` with `N+1` to detect that.
 ### Configuration
 
 - `GET /v1/config` — the effective configuration (file, includes, `ALDAP_*`, defaults) as TOML; every
-  inline secret is `"***"`, so the output is not a drop-in replacement for files with inline secrets.
+  inline secret that is set is `"***"`, an unset one is `""` (so the rendering loads back). A body whose
+  inline secret is still the placeholder `"***"` is refused (`400 invalid_config`, "masked placeholder"):
+  give the secret or move it to `*_file` / `*_env` before `PUT`. Values of `headers` tables are not
+  masked (docs/DECISIONS.md, OPEN «headers in GET /v1/config»).
+- `PUT /v1/config?dry_run=true` — step 1 below only: `{"ok": true, "dry_run": true}` or `400`; no backup,
+  no write, no reload (`aldapctl config validate`, TUI `v`).
 - `PUT /v1/config` (TOML body, ≤ 4 MiB):
   1. the body is loaded and validated in memory as if it were the file (includes and environment
      apply, strict file checks) → `400 invalid_config`, **the file is not touched**;

@@ -1,0 +1,2 @@
+2026-10-23T11:58:00Z #41 bind_fail medium profile=virola ip=192.0.2.10 account=jdoe reason=invalid_credentials attempt=3
+2026-10-23T11:59:00Z #42 lock high profile=virola ip=192.0.2.10 key=192.0.2.10 target=ip until=2026-10-23T12:15:00Z

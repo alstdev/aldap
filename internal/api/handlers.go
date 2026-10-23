@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -82,6 +83,7 @@ type upstreamServer struct {
 
 type status struct {
 	Version       string                      `json:"version"`
+	GoVersion     string                      `json:"go_version"`
 	UptimeS       int64                       `json:"uptime_s"`
 	Lockdown      bool                        `json:"lockdown"`
 	Learning      bool                        `json:"learning"`
@@ -95,7 +97,7 @@ type status struct {
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request, _ *call) {
-	st := status{Version: s.o.Version, UptimeS: int64(s.o.Now().Sub(s.started) / time.Second), Profiles: []string{}, Upstreams: map[string][]upstreamServer{}}
+	st := status{Version: s.o.Version, GoVersion: runtime.Version(), UptimeS: int64(s.o.Now().Sub(s.started) / time.Second), Profiles: []string{}, Upstreams: map[string][]upstreamServer{}}
 	for _, p := range s.o.Backend.Profiles() {
 		st.Profiles = append(st.Profiles, p.Name)
 	}
@@ -313,9 +315,22 @@ func (s *Server) handleConfigGet(w http.ResponseWriter, _ *http.Request, _ *call
 }
 
 func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request, _ *call) {
+	dry, err := boolParam(r, "dry_run")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxConfigBody))
 	if err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("the configuration exceeds %d bytes", maxConfigBody))
+		return
+	}
+	if dry {
+		if err := s.o.Backend.ValidateConfig(r.Context(), body); err != nil {
+			backendError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, ApplyResult{OK: true, DryRun: true})
 		return
 	}
 	res, err := s.o.Backend.ApplyConfig(r.Context(), body)
@@ -325,6 +340,19 @@ func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request, _ *call
 	}
 	res.OK = true
 	writeJSON(w, http.StatusOK, res)
+}
+
+// boolParam reads an optional boolean query parameter.
+func boolParam(r *http.Request, name string) (bool, error) {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return false, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false", name)
+	}
+	return b, nil
 }
 
 func (s *Server) handleReload(w http.ResponseWriter, r *http.Request, _ *call) {
@@ -341,6 +369,24 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request, _ *call) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "sync started"})
+}
+
+func (s *Server) handleRecord(w http.ResponseWriter, r *http.Request, _ *call) {
+	var req struct {
+		State string `json:"state"`
+	}
+	if !decodeJSON(w, r, &req, false) {
+		return
+	}
+	if req.State != "on" && req.State != "off" {
+		writeError(w, http.StatusBadRequest, "bad_request", "state must be on or off")
+		return
+	}
+	if err := s.o.Backend.Record(r.Context(), r.PathValue("name"), req.State == "on"); err != nil {
+		backendError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"record": req.State})
 }
 
 type testRequest struct {

@@ -1,42 +1,10 @@
 package main
 
 import (
-	"bytes"
+	"slices"
 	"strings"
 	"testing"
 )
-
-func TestRun_Commands(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name       string
-		args       []string
-		wantCode   int
-		wantStdout string
-		wantStderr string
-	}{
-		{name: "version", args: []string{"version"}, wantCode: 0, wantStdout: "aldapctl dev (commit none, built unknown, go"},
-		{name: "help", args: []string{"help"}, wantCode: 0, wantStdout: "Usage: aldapctl"},
-		{name: "help_flag", args: []string{"--help"}, wantCode: 0, wantStdout: "Usage: aldapctl"},
-		{name: "no_args", args: nil, wantCode: 2, wantStderr: "Usage: aldapctl"},
-		{name: "unknown", args: []string{"bogus"}, wantCode: 2, wantStderr: `unknown command "bogus"`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			var stdout, stderr bytes.Buffer
-			if got := run(tt.args, &stdout, &stderr); got != tt.wantCode {
-				t.Fatalf("exit code = %d, want %d (stderr: %s)", got, tt.wantCode, stderr.String())
-			}
-			if !strings.Contains(stdout.String(), tt.wantStdout) {
-				t.Errorf("stdout = %q, want substring %q", stdout.String(), tt.wantStdout)
-			}
-			if !strings.Contains(stderr.String(), tt.wantStderr) {
-				t.Errorf("stderr = %q, want substring %q", stderr.String(), tt.wantStderr)
-			}
-		})
-	}
-}
 
 func TestVersionLine_UsesLdflags(t *testing.T) {
 	version, commit, date = "1.2.3", "abc1234", "2026-01-02T03:04:05Z"
@@ -46,5 +14,45 @@ func TestVersionLine_UsesLdflags(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("versionLine() = %q, want substring %q", got, want)
 		}
+	}
+}
+
+func TestParseArgs_Interleaved(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		pos  []string
+		set  []string
+	}{
+		{"flags_first", []string{"--socket", "/s", "unlock", "1.2.3.4"}, []string{"unlock", "1.2.3.4"}, []string{"socket"}},
+		{"flags_last", []string{"lock", "1.2.3.4", "--for", "1h", "-y"}, []string{"lock", "1.2.3.4"}, []string{"for", "yes"}},
+		{"double_dash", []string{"unlock", "--yes", "--", "-odd-account"}, []string{"unlock", "-odd-account"}, []string{"yes"}},
+		{"short_follow", []string{"events", "-f"}, []string{"events"}, []string{"follow"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &opts{}
+			pos, set, err := parseArgs(newFlagSet(o), tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			slices.Sort(set)
+			if !slices.Equal(pos, tc.pos) || !slices.Equal(set, tc.set) {
+				t.Errorf("pos %v set %v; want %v %v", pos, set, tc.pos, tc.set)
+			}
+		})
+	}
+	if _, _, err := parseArgs(newFlagSet(&opts{}), []string{"lock", "--for", "soon"}); err == nil {
+		t.Error("bad duration accepted")
+	}
+}
+
+func TestTargetOf(t *testing.T) {
+	for key, want := range map[string]string{"192.0.2.1": "ip", "2001:db8::1": "ip", "jdoe": "account", "jdoe@corp.example": "account", "CORP\\jdoe": "account"} {
+		if got := targetOf(key, false); got != want {
+			t.Errorf("%s: %s, want %s", key, got, want)
+		}
+	}
+	if targetOf("192.0.2.1", true) != "account" {
+		t.Error("--account ignored")
 	}
 }

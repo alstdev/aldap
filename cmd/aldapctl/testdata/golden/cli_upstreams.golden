@@ -1,0 +1,3 @@
+UPSTREAM  SERVER                        STATE  OK   FAIL  P50  P95  IDLE  ACTIVE  LAST CHECK            LAST ERROR
+ad        ldaps://dc1.corp.example:636  up     120  0     2ms  5ms  2     1       2026-10-23T11:59:58Z  -
+ad        ldaps://dc2.corp.example:636  down   0    4     0s   0s   0     0       2026-10-23T11:59:50Z  dial tcp: i/o timeout

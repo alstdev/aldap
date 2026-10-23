@@ -30,6 +30,8 @@ jobs:
       - uses: golangci/golangci-lint-action@v8
         with: { version: latest }
       - run: go vet ./...
+      # aldapctl for windows/amd64: build, vet and test compilation (named pipe client).
+      - run: make windows-ctl
       - run: make vuln
       - run: make licenses
       - run: git diff --exit-code THIRD_PARTY_LICENSES.md

@@ -59,8 +59,13 @@ type Backend interface {
 	// ApplyConfig validates body, writes it atomically with a backup of the
 	// previous file and reloads; on a failed reload the previous file is restored.
 	ApplyConfig(ctx context.Context, body []byte) (ApplyResult, error)
+	// ValidateConfig checks body like ApplyConfig without writing or
+	// reloading (PUT /v1/config?dry_run=true).
+	ValidateConfig(ctx context.Context, body []byte) error
 	Reload(ctx context.Context) error
 	Sync(ctx context.Context, profile string) error
+	// Record starts or stops request recording of a profile.
+	Record(ctx context.Context, profile string, on bool) error
 }
 
 // ProfileInfo describes a profile without secrets (/v1/profiles).
@@ -78,6 +83,7 @@ type ProfileInfo struct {
 // ApplyResult is the answer of PUT /v1/config.
 type ApplyResult struct {
 	OK     bool   `json:"ok"`
+	DryRun bool   `json:"dry_run,omitempty"`
 	Backup string `json:"backup,omitempty"`
 }
 
@@ -134,6 +140,7 @@ var routeTable = []route{
 	{Route{"POST", "/v1/reload", ScopeAdmin}, (*Server).handleReload},
 	{Route{"POST", "/v1/profiles/{name}/sync", ScopeAdmin}, (*Server).handleSync},
 	{Route{"POST", "/v1/profiles/{name}/test", ScopeAdmin}, (*Server).handleTest},
+	{Route{"POST", "/v1/profiles/{name}/record", ScopeAdmin}, (*Server).handleRecord},
 	{Route{"POST", "/v1/baseline/{profile}/learn", ScopeAdmin}, (*Server).handleLearn},
 }
 
@@ -433,6 +440,9 @@ func CheckTransport(addr net.Addr, withTLS bool) error {
 	case *net.UnixAddr:
 		return nil
 	}
+	if isPipe(addr) {
+		return nil
+	}
 	return fmt.Errorf("%w: %s", ErrInsecureListen, addr)
 }
 
@@ -447,11 +457,15 @@ func (s *Server) ServeMetrics(ln net.Listener, tlsCfg *tls.Config) error {
 	return s.serve(ln, tlsCfg, kindMetrics)
 }
 
-// ServeIPC serves the IPC socket (no token, scope admin).
+// isPipe reports a Windows named pipe listener (go-winio reports the
+// network "pipe"); it is local only and restricted by its ACL.
+func isPipe(addr net.Addr) bool { return addr.Network() == "pipe" }
+
+// ServeIPC serves the IPC socket or named pipe (no token, scope admin).
 func (s *Server) ServeIPC(ln net.Listener) error {
-	if _, ok := ln.Addr().(*net.UnixAddr); !ok {
+	if _, ok := ln.Addr().(*net.UnixAddr); !ok && !isPipe(ln.Addr()) {
 		_ = ln.Close() //nolint:errcheck // refused listener
-		return fmt.Errorf("ipc: %s is not a unix socket", ln.Addr())
+		return fmt.Errorf("ipc: %s is not a unix socket or a named pipe", ln.Addr())
 	}
 	return s.serve(ln, nil, kindIPC)
 }

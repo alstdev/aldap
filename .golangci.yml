@@ -78,6 +78,13 @@ linters:
         linters:
           - gosec
           - errcheck
+      # aldapctl takes file paths and the API URL from its own command line by
+      # design; gosec's taint analysis (G703/G704) reports them inconsistently
+      # between runs, so a //nolint would trip nolintlint.
+      - path: cmd/aldapctl/
+        linters:
+          - gosec
+        text: "G70[34]"
       - path: internal/events/schematest/
         linters:
           - errcheck

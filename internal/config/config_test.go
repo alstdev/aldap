@@ -469,6 +469,7 @@ func TestValidate_Rules(t *testing.T) {
 		{"upstream_pw_without_dn", "[upstream.u]\nservers = [\"ldaps://x\"]\nbind_password_env = \"P\"\n", "upstream.u.bind_dn", "required", false},
 		{"upstream_dn_without_pw", "[upstream.u]\nservers = [\"ldaps://x\"]\nbind_dn = \"cn=a\"\n", "upstream.u.bind_password", "required", false},
 		{"upstream_two_sources", "[upstream.u]\nservers = [\"ldaps://x\"]\nbind_dn = \"cn=a\"\nbind_password = \"a\"\nbind_password_env = \"P\"\n", "upstream.u.bind_password", "exactly one", false},
+		{"upstream_masked_secret", "[upstream.u]\nservers = [\"ldaps://x\"]\nbind_dn = \"cn=a\"\nbind_password = \"***\"\n", "upstream.u.bind_password", "masked placeholder", false},
 		{"upstream_inline_warn", "[upstream.u]\nservers = [\"ldaps://x\"]\nbind_dn = \"cn=a\"\nbind_password = \"a\"\n", "upstream.u.bind_password", "inline", true},
 		{"upstream_bad_dn", "[upstream.u]\nservers = [\"ldaps://x\"]\nbase_dn = \"nodn\"\n", "upstream.u.base_dn", "expected '='", false},
 		{"upstream_kind", "[upstream.u]\nservers = [\"ldaps://x\"]\nkind = \"ldap\"\n", "upstream.u.kind", "not one of", false},

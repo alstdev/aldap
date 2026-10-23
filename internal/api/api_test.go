@@ -48,6 +48,9 @@ type fakeBackend struct {
 	reloadErr error
 	reloads   int
 	syncErr   error
+	validated [][]byte
+	recordErr error
+	records   []string
 	testErr   error
 	testReq   vdir.TestRequest
 }
@@ -90,6 +93,29 @@ func (f *fakeBackend) ApplyConfig(_ context.Context, body []byte) (ApplyResult, 
 	}
 	f.applied = append(f.applied, body)
 	return ApplyResult{Backup: "/etc/aldap/aldap.toml.bak.1"}, nil
+}
+
+func (f *fakeBackend) ValidateConfig(_ context.Context, body []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.applyErr != nil {
+		return f.applyErr
+	}
+	f.validated = append(f.validated, body)
+	return nil
+}
+
+func (f *fakeBackend) Record(_ context.Context, profile string, on bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if profile != "virola" {
+		return fmt.Errorf("profile %q: %w", profile, ErrNotFound)
+	}
+	if f.recordErr != nil {
+		return f.recordErr
+	}
+	f.records = append(f.records, fmt.Sprintf("%s:%v", profile, on))
+	return nil
 }
 
 func (f *fakeBackend) Reload(context.Context) error {
@@ -216,7 +242,7 @@ func routeCall(rt Route) (path, body string) {
 	switch rt.Path {
 	case "/v1/locks":
 		body = `{"target":"ip","key":"192.0.2.99"}`
-	case "/v1/lockdown":
+	case "/v1/lockdown", "/v1/profiles/{name}/record":
 		body = `{"state":"off"}`
 	case "/v1/config":
 		body = "[server]\n"
@@ -630,7 +656,18 @@ func TestAdmin_ConfigReloadSyncTestLearn(t *testing.T) {
 	if res := decode[ApplyResult](t, w); w.Code != http.StatusOK || !res.OK || res.Backup == "" || len(e.be.applied) != 1 {
 		t.Errorf("config put: %d %+v", w.Code, res)
 	}
+	// Dry run: validated only, nothing applied.
+	w = e.do("PUT", "/v1/config?dry_run=true", tokAdmin, "[server]\n")
+	if res := decode[ApplyResult](t, w); w.Code != http.StatusOK || !res.OK || !res.DryRun || res.Backup != "" || len(e.be.applied) != 1 || len(e.be.validated) != 1 {
+		t.Errorf("config dry run: %d %+v", w.Code, res)
+	}
+	if w := e.do("PUT", "/v1/config?dry_run=maybe", tokAdmin, "[server]\n"); w.Code != http.StatusBadRequest {
+		t.Errorf("dry_run=maybe: %d", w.Code)
+	}
 	e.be.applyErr = fmt.Errorf("%w:\nserver.log_level: bad", ErrInvalidConfig)
+	if w := e.do("PUT", "/v1/config?dry_run=1", tokAdmin, "x"); w.Code != http.StatusBadRequest || decode[apiError](t, w).Code != "invalid_config" {
+		t.Errorf("invalid config dry run: %d", w.Code)
+	}
 	if w := e.do("PUT", "/v1/config", tokAdmin, "x"); w.Code != http.StatusBadRequest || decode[apiError](t, w).Code != "invalid_config" {
 		t.Errorf("invalid config: %d", w.Code)
 	}
@@ -664,6 +701,24 @@ func TestAdmin_ConfigReloadSyncTestLearn(t *testing.T) {
 		if w := e.do("POST", "/v1/profiles/"+tc.path+"/sync", tokAdmin, ""); w.Code != tc.want {
 			t.Errorf("sync %s: %d", name, w.Code)
 		}
+	}
+	// Record on/off.
+	for name, tc := range map[string]struct {
+		err  error
+		path string
+		body string
+		want int
+	}{
+		"on": {nil, "virola", `{"state":"on"}`, http.StatusOK}, "unknown": {nil, "nope", `{"state":"on"}`, http.StatusNotFound},
+		"bad_state": {nil, "virola", `{"state":"maybe"}`, http.StatusBadRequest}, "not_implemented": {ErrNotImplemented, "virola", `{"state":"off"}`, http.StatusNotImplemented},
+	} {
+		e.be.recordErr = tc.err
+		if w := e.do("POST", "/v1/profiles/"+tc.path+"/record", tokAdmin, tc.body); w.Code != tc.want {
+			t.Errorf("record %s: %d", name, w.Code)
+		}
+	}
+	if len(e.be.records) != 1 || e.be.records[0] != "virola:true" {
+		t.Errorf("records: %v", e.be.records)
 	}
 	// Profile test.
 	w = e.do("POST", "/v1/profiles/virola/test", tokAdmin, `{"base":"ou=users,dc=aldap","scope":"one","filter":"(uid=a)","attrs":["mail"],"size_limit":3}`)

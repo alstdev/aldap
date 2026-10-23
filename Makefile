@@ -45,6 +45,12 @@ build: ## Build binaries for all platforms into dist/
 	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/aldapctl_$${os}_$${arch}$$ext ./cmd/aldapctl || exit 1; \
 	done
 
+.PHONY: windows-ctl
+windows-ctl: ## Cross-compile and vet aldapctl for windows/amd64 (tests compiled too)
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build $(GOFLAGS) -o /dev/null ./cmd/aldapctl
+	GOOS=windows GOARCH=amd64 go vet ./cmd/aldapctl/ ./internal/api/
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -c -o /dev/null ./cmd/aldapctl/
+
 .PHONY: build-local
 build-local: ## Build for current platform into dist/
 	@mkdir -p $(DIST)
@@ -104,7 +110,7 @@ shellcheck: ## shellcheck all scripts
 	shellcheck -x build.sh $(wildcard scripts/*.sh)
 
 .PHONY: ci
-ci: lint vet vuln licenses test integration shellcheck ## Everything except Samba
+ci: lint vet vuln licenses windows-ctl test integration shellcheck ## Everything except Samba
 
 .PHONY: docker-plain
 docker-plain: ## Build container with public golang/scratch images (local testing)

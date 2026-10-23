@@ -260,3 +260,30 @@ func TestTransport_LoopbackOnlyWithoutTLS(t *testing.T) {
 		t.Errorf("tls healthz: %d", resp.StatusCode)
 	}
 }
+
+// pipeListener reports the address of a go-winio named pipe listener.
+type pipeListener struct{ net.Listener }
+
+type pipeAddr string
+
+func (a pipeAddr) Network() string { return "pipe" }
+func (a pipeAddr) String() string  { return string(a) }
+
+func (l pipeListener) Addr() net.Addr { return pipeAddr(`\\.\pipe\aldap-test`) }
+
+func TestServeIPC_NamedPipeAddress(t *testing.T) {
+	e := newEnv(t, nil)
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckTransport(pipeAddr("x"), false); err != nil {
+		t.Errorf("pipe refused: %v", err)
+	}
+	if err := e.s.ServeIPC(pipeListener{ln}); err != nil {
+		t.Fatalf("named pipe refused as IPC: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	e.s.Shutdown(ctx)
+}

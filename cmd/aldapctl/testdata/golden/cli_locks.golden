@@ -1,0 +1,3 @@
+TARGET   KEY         UNTIL                 REMAINING  FAILURES  SOURCE     PROFILE  REASON
+ip       192.0.2.10  2026-10-23T12:15:00Z  15m0s      5         ratelimit  virola   -
+account  jdoe        2026-10-23T13:00:00Z  1h0m0s     0         api        -        helpdesk ticket 42
