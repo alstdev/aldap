@@ -149,6 +149,7 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `notify.channel[].token_env` | string |  | virola: environment variable holding the access token. |
 | `notify.channel[].room_id` | int | `0` | virola: destination room id. |
 | `notify.channel[].user_id` | int | `0` | virola: destination user id. |
+| `notify.channel[].path_template` | string |  | virola: request path under base_url; {room_id} or {user_id} is substituted. Empty: /api/v1/rooms/{room_id}/messages or /api/v1/users/{user_id}/messages (Virola Web API). |
 | `notify.channel[].tls_ca_file` | string |  | virola: CA bundle used to verify the server. |
 | `notify.channel[].tls_insecure_skip_verify` | bool | `false` | virola: disable certificate verification (warned). |
 | `notify.channel[].smtp_host` | string |  | email: SMTP host. |

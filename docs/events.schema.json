@@ -132,6 +132,51 @@
           }
         }
       }
+    },
+    {
+      "if": { "properties": { "event": { "const": "stale_served" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["age_s", "entries"],
+            "properties": {
+              "age_s": { "type": "integer", "minimum": 0 },
+              "entries": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "replica_synced" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["age_s", "entries"],
+            "properties": {
+              "age_s": { "type": "integer", "minimum": 0 },
+              "entries": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "replica_sync_failed" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["age_s", "entries"],
+            "properties": {
+              "age_s": { "type": "integer", "minimum": 0 },
+              "entries": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
     }
   ]
 }

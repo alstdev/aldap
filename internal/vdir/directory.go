@@ -30,6 +30,18 @@ type Searcher interface {
 	UserBind(ctx context.Context, name, password string) error
 }
 
+// SearchSource answers upstream searches: the ttl cache in front of the
+// upstream (cache.mode = ttl).
+type SearchSource interface {
+	Search(ctx context.Context, req upstream.SearchRequest) (*upstream.Result, error)
+}
+
+// ReplicaSource holds the synced copy of the profile (cache.mode =
+// replica, *cache.Replica); data is what SyncReplica returned.
+type ReplicaSource interface {
+	Current() (data any, at time.Time, ok bool)
+}
+
 // Options tune a Directory.
 type Options struct {
 	Logger *slog.Logger
@@ -51,6 +63,12 @@ type Options struct {
 	Sleep func(context.Context, time.Duration)
 	// Metrics receives counters and histograms (nil = none).
 	Metrics *metrics.Metrics
+	// Cache answers the searches in place of the upstream (cache.mode =
+	// ttl). Binds never use it.
+	Cache SearchSource
+	// Replica serves every search from memory (cache.mode = replica);
+	// binds still go to the upstream.
+	Replica ReplicaSource
 }
 
 // Directory serves one profile. It implements listener.Handler. up is nil
@@ -58,10 +76,12 @@ type Options struct {
 type Directory struct {
 	rules *profile.Rules
 	up    Searcher
-	log   *slog.Logger
-	ev    events.Sink
-	o     Options
-	now   func() time.Time
+	// src serves searches: the ttl cache or up; binds use up only.
+	src SearchSource
+	log *slog.Logger
+	ev  events.Sink
+	o   Options
+	now func() time.Time
 
 	memMu sync.Mutex
 	mem   *membership
@@ -96,6 +116,17 @@ func New(rules *profile.Rules, up Searcher, o Options) *Directory {
 	}
 	if rules.Mode == "honeypot" {
 		d.up = nil
+	}
+	switch {
+	case d.up == nil:
+		d.o.Cache, d.o.Replica = nil, nil
+	case d.o.Replica != nil:
+		// Searches are answered from the replica; its sync reads the upstream.
+		d.o.Cache, d.src = nil, d.up
+	case d.o.Cache != nil:
+		d.src = d.o.Cache
+	default:
+		d.src = d.up
 	}
 	return d
 }
@@ -151,6 +182,12 @@ type searchCtx struct {
 	trap    string // honeytoken account targeted, "" when none
 	kind    profile.BaseKind
 	known   bool // kind is set (first page of a search)
+	// hits counts upstream requests answered by the ttl cache; stale is
+	// the age of the oldest stale result served (0 = none); replica marks
+	// a search answered from the replica.
+	hits    int
+	stale   time.Duration
+	replica bool
 }
 
 // Search answers a client search (SPEC §4.2). A paged request with a
@@ -394,7 +431,11 @@ func (d *Directory) groups(ctx context.Context, sc *searchCtx, name string) ([]l
 	if err != nil {
 		return nil, d.upstreamError(sc, err)
 	}
-	sc.queries++
+	if d.o.Replica != nil {
+		sc.replica = true
+	} else {
+		sc.queries++
+	}
 	var out []listener.Entry
 	for _, gd := range m.groups {
 		if name != "" && !strings.EqualFold(gd.g.Name, name) {
@@ -560,11 +601,17 @@ func (d *Directory) users(ctx context.Context, sc *searchCtx, rdn string) ([]lis
 	if sc.upstream.IsFalse() {
 		return nil, listener.Success
 	}
+	if d.o.Replica != nil {
+		return d.replicaUsers(sc, rdn)
+	}
 	var merged []upstream.Entry
 	if d.up != nil {
 		var res listener.Result
 		if merged, res = d.fetchUsers(ctx, sc); res.Code != ldap.LDAPResultSuccess {
 			return nil, res
+		}
+		if sc.stale > 0 {
+			d.emitStale(sc, len(merged))
 		}
 	}
 	traps := len(merged)
@@ -630,7 +677,7 @@ func (d *Directory) fetchUsers(ctx context.Context, sc *searchCtx) ([]upstream.E
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i], errs[i] = d.up.Search(ctx, upstream.SearchRequest{Base: base, Scope: upstream.ScopeSub, Filter: sc.upstream,
+			results[i], errs[i] = d.src.Search(ctx, upstream.SearchRequest{Base: base, Scope: upstream.ScopeSub, Filter: sc.upstream,
 				Attrs: attrs, SizeLimit: fetch, TimeLimit: sc.req.TimeLimit})
 		}(i, base)
 	}
@@ -641,10 +688,16 @@ func (d *Directory) fetchUsers(ctx context.Context, sc *searchCtx) ([]upstream.E
 		if errs[i] != nil {
 			return nil, d.upstreamError(sc, errs[i])
 		}
-		if r.Pages > 0 {
+		switch {
+		case r.Cached:
+			sc.hits++
+			if r.Stale {
+				sc.stale = max(sc.stale, max(r.Age, time.Millisecond))
+			}
+		case r.Pages > 0:
 			sc.queries++
 		}
-		if r.Server != "" {
+		if r.Server != "" && !r.Cached {
 			sc.server = r.Server
 		}
 		for _, e := range r.Entries {
@@ -730,6 +783,9 @@ func (d *Directory) upstreamError(sc *searchCtx, err error) listener.Result {
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return listener.Result{Code: ldap.LDAPResultTimeLimitExceeded}
+	case errors.Is(err, errNoReplica):
+		d.log.Warn("replica not synced yet", "conn_id", sc.conn.ID())
+		return listener.Result{Code: ldap.LDAPResultUnavailable, Diagnostic: "directory unavailable"}
 	case errors.Is(err, upstream.ErrUnavailable), errors.Is(err, upstream.ErrClosed):
 		d.log.Warn("upstream unavailable", "conn_id", sc.conn.ID(), "err", err)
 		return listener.Result{Code: ldap.LDAPResultUnavailable, Diagnostic: "directory unavailable"}
@@ -856,7 +912,7 @@ func (d *Directory) emitSearch(sc *searchCtx, res listener.Result, results int) 
 	ev.Duration = d.now().Sub(sc.start)
 	data := map[string]any{
 		"base": sc.req.Base, "scope": sc.req.Scope.String(), "filter_norm": redactFilter(sc.filter),
-		"results": results, "upstream_queries": sc.queries, "cache_hit": false, "result_code": res.Code,
+		"results": results, "upstream_queries": sc.queries, "cache_hit": sc.cacheHit(), "result_code": res.Code,
 	}
 	if sc.filter == nil {
 		data["filter_norm"] = "(invalid)"
@@ -875,9 +931,39 @@ func (d *Directory) emitSearch(sc *searchCtx, res listener.Result, results int) 
 	}
 	ev.Data = data
 	d.ev.Emit(ev)
-	cache := "none"
-	if sc.queries == 0 {
-		cache = "local"
+	d.o.Metrics.Search(d.rules.Name, d.cacheLabel(sc), results, sc.queries)
+}
+
+// cacheHit reports a search answered from memory without an upstream
+// query: the replica, or the ttl cache for every upstream request.
+func (sc *searchCtx) cacheHit() bool {
+	return sc.replica || sc.hits > 0 && sc.queries == 0
+}
+
+// cacheLabel is the cache outcome of searches_total: replica, stale, hit
+// or miss (ttl), local (nothing asked upstream) or none.
+func (d *Directory) cacheLabel(sc *searchCtx) string {
+	switch {
+	case sc.replica:
+		return "replica"
+	case sc.stale > 0:
+		return "stale"
+	case sc.cacheHit():
+		return "hit"
+	case sc.queries == 0:
+		return "local"
+	case d.o.Cache != nil:
+		return "miss"
 	}
-	d.o.Metrics.Search(d.rules.Name, cache, results, sc.queries)
+	return "none"
+}
+
+// emitStale reports a search answered with expired cache results while
+// every upstream server was down (SPEC §5.1 stale_while_down).
+func (d *Directory) emitStale(sc *searchCtx, entries int) {
+	ev := sc.conn.Event(events.StaleServed, events.LevelMedium)
+	ev.Upstream = d.upstreamName()
+	ev.Data = map[string]any{"age_s": int(sc.stale / time.Second), "entries": entries}
+	d.ev.Emit(ev)
+	d.log.Warn("stale cache served, upstream down", "conn_id", sc.conn.ID(), "age_s", int(sc.stale/time.Second), "entries", entries)
 }

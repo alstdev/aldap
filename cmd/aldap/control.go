@@ -102,16 +102,20 @@ func (c *controller) Test(ctx context.Context, profile string, req vdir.TestRequ
 	return vdir.TestResult{}, fmt.Errorf("profile %q: %w", profile, api.ErrNotFound)
 }
 
-// Sync implements api.Backend; the replica cache comes with Stage 9.
+// Sync implements api.Backend: it asks the replica loop of the profile
+// for a sync now (202; the outcome is replica_synced/replica_sync_failed).
 func (c *controller) Sync(_ context.Context, profile string) error {
-	p, ok := c.daemon().cfg.Profiles[profile]
-	if !ok {
+	d := c.daemon()
+	if _, ok := d.cfg.Profiles[profile]; !ok {
 		return fmt.Errorf("profile %q: %w", profile, api.ErrNotFound)
 	}
-	if p.Cache.Mode != "replica" {
-		return fmt.Errorf("profile %q: %w", profile, api.ErrNotReplica)
+	for _, sp := range d.profiles {
+		if sp.name == profile && sp.cache != nil && sp.cache.replica != nil {
+			sp.cache.replica.Trigger()
+			return nil
+		}
 	}
-	return fmt.Errorf("replica sync: %w (Stage 9)", api.ErrNotImplemented)
+	return fmt.Errorf("profile %q: %w", profile, api.ErrNotReplica)
 }
 
 // ConfigTOML implements api.Backend: the effective configuration (file,

@@ -20,14 +20,17 @@ func TestSchema_EveryKindValidates(t *testing.T) {
 	}
 	// Minimal valid data per kind with constraints.
 	data := map[string]map[string]any{
-		events.BindFail:      {"reason": "invalid_password"},
-		events.BindBlocked:   {"reason": "ip_locked"},
-		events.Lock:          {"target": "ip", "key": "10.0.0.1", "until": "2026-10-19T10:00:00Z", "source": "ratelimit", "failures": 3},
-		events.AttackStart:   {"kind": "spray", "attack_id": "a1", "ips": []string{"10.0.0.1"}, "accounts_count": 6, "failures": 6, "rate_per_min": 1.5, "first_seen": "2026-10-19T10:00:00Z", "last_seen": "2026-10-19T10:01:00Z"},
-		events.AttackSummary: {"kind": "enumeration", "attack_id": "a1"},
-		events.AttackEnd:     {"kind": "slow_brute", "attack_id": "a1"},
-		events.Search:        {"base": "ou=users,dc=x", "scope": "sub", "filter_norm": "(uid=a)", "results": 1, "attrs_requested": []string{"uid"}, "attrs_denied": []string{}, "denied_terms": []string{}, "upstream_queries": 1, "cache_hit": false},
-		events.OpDenied:      {"op": "add"},
+		events.BindFail:          {"reason": "invalid_password"},
+		events.BindBlocked:       {"reason": "ip_locked"},
+		events.Lock:              {"target": "ip", "key": "10.0.0.1", "until": "2026-10-19T10:00:00Z", "source": "ratelimit", "failures": 3},
+		events.AttackStart:       {"kind": "spray", "attack_id": "a1", "ips": []string{"10.0.0.1"}, "accounts_count": 6, "failures": 6, "rate_per_min": 1.5, "first_seen": "2026-10-19T10:00:00Z", "last_seen": "2026-10-19T10:01:00Z"},
+		events.AttackSummary:     {"kind": "enumeration", "attack_id": "a1"},
+		events.AttackEnd:         {"kind": "slow_brute", "attack_id": "a1"},
+		events.Search:            {"base": "ou=users,dc=x", "scope": "sub", "filter_norm": "(uid=a)", "results": 1, "attrs_requested": []string{"uid"}, "attrs_denied": []string{}, "denied_terms": []string{}, "upstream_queries": 1, "cache_hit": false},
+		events.OpDenied:          {"op": "add"},
+		events.StaleServed:       {"age_s": 75, "entries": 3},
+		events.ReplicaSynced:     {"age_s": 0, "entries": 19},
+		events.ReplicaSyncFailed: {"age_s": 300, "entries": 19},
 	}
 	for _, kind := range kinds {
 		e := events.Event{Event: kind, Level: events.LevelMedium, Profile: "p", ConnID: "c-1", ClientIP: "10.0.0.1", ClientPort: 1234,

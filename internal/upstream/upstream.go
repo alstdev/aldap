@@ -371,6 +371,11 @@ type Result struct {
 	Referrals int
 	// Truncated is set when SizeLimit or the server size limit cut the result.
 	Truncated bool
+	// Cached is set by internal/cache when the result came from memory
+	// (no query was sent); Stale when it had outlived the cache ttl and was
+	// served because every server was down; Age is its age then.
+	Cached, Stale bool
+	Age           time.Duration
 }
 
 // Search runs a paged search with failover. An absolute false filter yields

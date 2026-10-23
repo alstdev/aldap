@@ -676,3 +676,32 @@ func TestNoSecretsInOutput_Notify(t *testing.T) {
 		t.Errorf("tg-dead errors = %v", got)
 	}
 }
+
+// The documented Virola paths are the defaults; path_template replaces
+// them for a server that differs (DECISIONS «Virola message endpoint»).
+func TestVirola_Path(t *testing.T) {
+	cases := []struct {
+		name         string
+		room, user   int64
+		tpl, wantURL string
+	}{
+		{"room_default", 42, 0, "", "https://v.example/api/v1/rooms/42/messages"},
+		{"user_default", 0, 7, "", "https://v.example/api/v1/users/7/messages"},
+		{"room_override", 42, 0, "/api/v1/rooms/{room_id}/text-messages", "https://v.example/api/v1/rooms/42/text-messages"},
+		{"user_override", 0, 7, "/virola/api/v1/users/{user_id}/messages", "https://v.example/virola/api/v1/users/7/messages"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := virolaChannel("https://v.example/")
+			c.RoomID, c.UserID, c.PathTemplate = tc.room, tc.user, tc.tpl
+			v, err := newVirola(c, secret.Value{}, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer v.close()
+			if v.url != tc.wantURL {
+				t.Errorf("url = %q, want %q", v.url, tc.wantURL)
+			}
+		})
+	}
+}

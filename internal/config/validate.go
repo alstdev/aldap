@@ -484,6 +484,9 @@ func (v Validator) validateProfile(path, name string, p *Profile, c *Config, rep
 	}
 	atLeast(rep, path+".nested_depth", p.NestedDepth, 1)
 	v.validateProfileCache(path, &p.Cache, rep)
+	if p.Cache.Mode != "none" && p.Mode != "" && p.Mode != "proxy" {
+		rep.warnf(path+".cache.mode", "ignored for mode = %s (no upstream to cache)", p.Mode)
+	}
 	v.validateProfileLimits(path, &p.Limits, rep)
 	p.Ratelimit.validate(path+".ratelimit", rep)
 	v.checkFilter(rep, path+".shadow.filter", p.Shadow.Filter)
@@ -874,9 +877,36 @@ func (v Validator) validateVirolaChannel(p string, c *Channel, rep *Report) {
 	v.checkSecret(rep, p+".token", c.TokenSource(), true)
 	if (c.RoomID == 0) == (c.UserID == 0) {
 		rep.errorf(p+".room_id", "exactly one of room_id or user_id is required for type = virola")
+	} else {
+		checkVirolaPath(rep, p+".path_template", c)
 	}
 	if c.TLSInsecureSkipVerify {
 		rep.warnf(p+".tls_insecure_skip_verify", "certificate verification is disabled")
+	}
+}
+
+// checkVirolaPath accepts an absolute path that names the configured
+// destination through exactly its own placeholder, so an override cannot
+// silently post to another room or leave the target out.
+func checkVirolaPath(rep *Report, path string, c *Channel) {
+	tpl := c.PathTemplate
+	if tpl == "" {
+		return
+	}
+	want, other := "{room_id}", "{user_id}"
+	if c.UserID != 0 {
+		want, other = other, want
+	}
+	rest := strings.ReplaceAll(tpl, want, "")
+	switch {
+	case !strings.HasPrefix(tpl, "/") || strings.HasPrefix(tpl, "//"):
+		rep.errorf(path, "%q must be an absolute path starting with a single /", tpl)
+	case strings.Count(tpl, want) != 1:
+		rep.errorf(path, "%q must contain %s exactly once", tpl, want)
+	case strings.Contains(tpl, other):
+		rep.errorf(path, "%q uses %s, but the channel sets the other id", tpl, other)
+	case strings.ContainsAny(rest, "{}?#%\\ ") || slices.Contains(strings.Split(rest, "/"), ".."):
+		rep.errorf(path, "%q: only path characters and %s are allowed", tpl, want)
 	}
 }
 
