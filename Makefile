@@ -17,7 +17,9 @@ GOLANGCI    := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@lat
 # govulncheck is pinned (docs/DECISIONS.md); v1.8.0+ requires Go >= 1.26.
 GOVULN_VERSION ?= v1.9.0
 GOVULN      := go run golang.org/x/vuln/cmd/govulncheck@$(GOVULN_VERSION)
-GOLICENSES  := go run github.com/google/go-licenses@latest
+# go-licenses is built for the host and run with GOOS=linux and GOOS=windows
+# (scripts/licenses.sh); `go run` would build it for the target GOOS.
+GOLICENSES_BIN := artifacts/bin/go-licenses
 # gotestsum is pinned (docs/DECISIONS.md). On GitHub Actions the output is
 # grouped per test and failed tests are annotated (scripts/ci-annotate.sh).
 GOTESTSUM_VERSION ?= v1.13.0
@@ -92,8 +94,10 @@ vuln: ## govulncheck
 
 .PHONY: licenses
 licenses: ## Check dependency licenses and regenerate THIRD_PARTY_LICENSES.md
-	$(GOLICENSES) check --allowed_licenses=$(ALLOWED_LICENSES) ./...
-	$(GOLICENSES) report ./... --template scripts/licenses.tpl > THIRD_PARTY_LICENSES.md
+	@mkdir -p artifacts/bin
+	GOBIN=$(abspath artifacts/bin) go install github.com/google/go-licenses@latest
+	scripts/licenses.sh $(GOLICENSES_BIN) scripts/licenses.tpl $(ALLOWED_LICENSES) > THIRD_PARTY_LICENSES.md.tmp
+	mv THIRD_PARTY_LICENSES.md.tmp THIRD_PARTY_LICENSES.md
 
 .PHONY: shellcheck
 shellcheck: ## shellcheck all scripts
