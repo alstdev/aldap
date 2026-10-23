@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alstdev/aldap/internal/config"
 )
 
 // schemaEnum reads the event enum of docs/events.schema.json.
@@ -97,4 +99,20 @@ func TestLogger_Emit(t *testing.T) {
 		}
 	}).Emit(Event{Event: Startup})
 	Discard.Emit(Event{})
+}
+
+func TestEventKindsInSync(t *testing.T) {
+	enum := schemaEnum(t)
+	seen := map[string]bool{}
+	for _, k := range config.EventKinds {
+		if !enum[k] {
+			t.Errorf("config.EventKinds: %q is not in docs/events.schema.json", k)
+		}
+		seen[k] = true
+	}
+	for k := range enum {
+		if !strings.HasPrefix(k, "level:") && !seen[k] {
+			t.Errorf("docs/events.schema.json: %q is missing from config.EventKinds", k)
+		}
+	}
 }

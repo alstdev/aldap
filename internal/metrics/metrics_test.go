@@ -26,6 +26,7 @@ func TestMetrics_Exposition(t *testing.T) {
 	m.SetLocks(2, 1)
 	m.SetAttack("spray", true)
 	m.SetCertExpiry("virola", time.Now().Add(48*time.Hour))
+	m.Notify("tg", "ok")
 	rec := httptest.NewRecorder()
 	m.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), "GET", "/metrics", nil))
 	body, _ := io.ReadAll(rec.Body)
@@ -48,6 +49,7 @@ func TestMetrics_Exposition(t *testing.T) {
 		`aldap_locks_active{target="account"} 1`,
 		`aldap_attack_active{kind="spray"} 1`,
 		`aldap_cert_expiry_seconds{listener="virola"} 17`,
+		`aldap_notify_total{channel="tg",result="ok"} 1`,
 		"go_goroutines",
 	} {
 		if !strings.Contains(out, want) {
@@ -69,4 +71,5 @@ func TestMetrics_Exposition(t *testing.T) {
 	none.SetLocks(0, 0)
 	none.SetAttack("k", false)
 	none.SetCertExpiry("l", time.Now())
+	none.Notify("c", "ok")
 }

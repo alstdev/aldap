@@ -1,0 +1,13 @@
+ALDAP {{.Hostname}}: digest of {{.Digest.Total}} events ({{.Level}}), {{.Digest.From.UTC.Format "2006-01-02 15:04:05"}} – {{.Digest.To.UTC.Format "15:04:05"}} UTC
+{{- range .Digest.Attacks}}
+Attack {{get .Data "kind"}} ({{.Level}}): failures {{get .Data "failures"}}, {{get .Data "rate_per_min"}}/min, accounts {{get .Data "accounts_count"}}, sources {{join (get .Data "ips") ", "}}
+{{- end}}
+{{- range .Digest.Counts}}
+{{.Key}}: {{.N}}
+{{- end}}
+{{- if .Digest.IPs}}
+Top sources: {{range $i, $c := .Digest.IPs}}{{if $i}}, {{end}}{{$c.Key}} ({{$c.N}}){{end}}
+{{- end}}
+{{- if .Digest.Accounts}}
+Accounts involved: {{.Digest.Accounts}}
+{{- end}}

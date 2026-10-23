@@ -88,7 +88,7 @@
 
 ## Stage 8 — Notify
 Читати: SPEC §3.4 `[notify]`, §6 (типи подій для шаблонів); TESTING «Події, API, notify».
-- [ ] `internal/notify`: telegram, virola (`POST /api/v1/rooms/{id}/messages`, Bearer), email (SMTP STARTTLS/TLS), custom webhook; шаблони, cooldown, digest під час атаки, ретраї.
+- [x] `internal/notify`: telegram, virola (`POST /api/v1/rooms/{id}/messages`, Bearer — OPEN: шлях звірити з реальним Virola, DECISIONS), email (SMTP STARTTLS/TLS), custom webhook; шаблони, cooldown, digest під час атаки, ретраї.
 **КП:** тести з httptest/smtp-mock: cooldown не шле дубль; digest агрегує; шаблони рендеряться для кожного типу події; помилка каналу → метрика + лог, не блокує шину.
 
 ## Stage 9 — Кеш і репліка

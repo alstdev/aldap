@@ -838,6 +838,16 @@ func (v Validator) validateNotify(path string, n *Notify, rep *Report) {
 		}
 		names[c.Name] = true
 		oneOf(rep, p+".min_level", c.MinLevel, "low", "medium", "high")
+		for j, e := range c.Events {
+			if !slices.Contains(EventKinds, e) && NotifyLockAliases[e] == "" {
+				rep.errorf(fmt.Sprintf("%s.events[%d]", p, j), "unknown event type %q", e)
+			}
+		}
+		if len(c.Events) == 0 {
+			rep.warnf(p+".events", "empty: the channel receives nothing")
+		}
+		positive(rep, p+".timeout", c.Timeout)
+		validateRetry(rep, p+".retry", c.Retry)
 		if !oneOf(rep, p+".type", c.Type, "telegram", "virola", "email", "webhook") {
 			continue
 		}
@@ -848,6 +858,7 @@ func (v Validator) validateNotify(path string, n *Notify, rep *Report) {
 				rep.errorf(p+".chat_id", "required for type = telegram")
 			}
 			checkHTTPURL(rep, p+".api_base", c.APIBase)
+			oneOf(rep, p+".parse_mode", c.ParseMode, "MarkdownV2", "HTML", "none")
 		case "virola":
 			v.validateVirolaChannel(p, c, rep)
 		case "email":
@@ -886,19 +897,29 @@ func (v Validator) validateEmailChannel(p string, c *Channel, rep *Report) {
 	if len(c.To) == 0 {
 		rep.errorf(p+".to", "at least one recipient is required for type = email")
 	}
+	checkNotifyTemplate(rep, p+".subject_template", c.SubjectTemplate)
+}
+
+// checkNotifyTemplate parses a notification template with stubs of the
+// functions internal/notify provides.
+func checkNotifyTemplate(rep *Report, path, text string) {
+	if text == "" {
+		return
+	}
+	funcs := template.FuncMap{}
+	for _, name := range NotifyTemplateFuncs {
+		funcs[name] = func(...any) any { return nil }
+	}
+	if _, err := template.New(path).Funcs(funcs).Parse(text); err != nil {
+		rep.errorf(path, "%v", err)
+	}
 }
 
 func (v Validator) validateWebhookChannel(p string, c *Channel, rep *Report) {
 	checkHTTPURL(rep, p+".url", c.URL)
 	oneOf(rep, p+".method", c.Method, "POST", "PUT", "PATCH")
-	if c.BodyTemplate != "" {
-		if _, err := template.New("body").Parse(c.BodyTemplate); err != nil {
-			rep.errorf(p+".body_template", "%v", err)
-		}
-	}
+	checkNotifyTemplate(rep, p+".body_template", c.BodyTemplate)
 	v.checkSecret(rep, p+".hmac_secret", c.HMACSecretSource(), false)
-	positive(rep, p+".timeout", c.Timeout)
-	validateRetry(rep, p+".retry", c.Retry)
 }
 
 // Validate checks the section on its own.

@@ -1,0 +1,7 @@
+ALDAP {{.Hostname}}: honeytoken used ({{.Level}})
+Account: {{get .Data "account"}}, operation: {{get .Data "op"}}
+{{- if .ClientIP}}
+Client: {{.ClientIP}}{{end}}
+{{- if .Profile}}
+Profile: {{.Profile}}{{end}}
+Time: {{.TS}}

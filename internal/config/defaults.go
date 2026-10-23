@@ -9,6 +9,26 @@ import (
 // enabled person accounts only.
 const DefaultADFilter = "(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))"
 
+// EventKinds lists the SPEC §6 event types; TestEventKindsInSync
+// (internal/events) keeps it equal to the enum of docs/events.schema.json.
+var EventKinds = []string{
+	"bind_ok", "bind_fail", "bind_blocked", "lock", "unlock", "attack_start", "attack_summary", "attack_end",
+	"recon", "anomaly", "honeytoken", "search", "op_denied", "session_summary", "rate_limited", "tarpit",
+	"lockdown", "upstream_down", "upstream_up", "stale_served", "replica_sync_failed", "replica_synced",
+	"cert_expiring", "cert_renewed", "config_reload", "insecure_config", "shadow_diff", "api_call",
+	"startup", "shutdown",
+}
+
+// NotifyLockAliases are the [[notify.channel]].events names that select
+// lock events by data.target (SPEC §3.4 lists lock_account by default).
+var NotifyLockAliases = map[string]string{"lock_account": "account", "lock_ip": "ip"}
+
+// NotifyTemplateFuncs names the functions available in notification
+// templates (internal/notify); the validator parses templates with stubs
+// of these names. TestTemplateFuncsInSync (internal/notify) keeps the
+// list equal to the implementation.
+var NotifyTemplateFuncs = []string{"get", "join", "json", "md", "html", "upper", "lower", "default"}
+
 // DefaultChannelEvents is the event list of a notification channel without an explicit one.
 var DefaultChannelEvents = []string{
 	"attack_start", "attack_summary", "attack_end", "lock_account",

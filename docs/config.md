@@ -134,14 +134,14 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `notify.channel[]` | array of tables |  | Channels ([[notify.channel]]). |
 | `notify.channel[].name` | string |  | Unique channel name. |
 | `notify.channel[].type` | string |  | telegram, virola, email or webhook. |
-| `notify.channel[].events` | []string | `["attack_start", "attack_summary", "attack_end", "lock_account", "upstream_down", "upstream_up", "cert_expiring", "honeytoken", "lockdown"]` | Event types delivered. |
-| `notify.channel[].min_level` | string | `"low"` | Minimum attack level: low, medium or high. |
+| `notify.channel[].events` | []string | `["attack_start", "attack_summary", "attack_end", "lock_account", "upstream_down", "upstream_up", "cert_expiring", "honeytoken", "lockdown"]` | Event types delivered; lock_account and lock_ip select lock events by target. |
+| `notify.channel[].min_level` | string | `"low"` | Minimum event level delivered: low, medium or high. |
 | `notify.channel[].template_dir` | string |  | Directory overriding the built-in message templates. |
 | `notify.channel[].bot_token` | secret |  | telegram: bot token, inline (warned). |
 | `notify.channel[].bot_token_file` | string |  | telegram: file holding the bot token. |
 | `notify.channel[].bot_token_env` | string |  | telegram: environment variable holding the bot token. |
 | `notify.channel[].chat_id` | string |  | telegram: chat id. |
-| `notify.channel[].parse_mode` | string | `"MarkdownV2"` | telegram: parse mode. |
+| `notify.channel[].parse_mode` | string | `"MarkdownV2"` | telegram: MarkdownV2, HTML or none. |
 | `notify.channel[].api_base` | string | `"https://api.telegram.org"` | telegram: API base URL. |
 | `notify.channel[].base_url` | string |  | virola: server base URL. |
 | `notify.channel[].token` | secret |  | virola: Web API access token, inline (warned). |
@@ -168,8 +168,8 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `notify.channel[].hmac_secret` | secret |  | webhook: HMAC key, inline (warned). |
 | `notify.channel[].hmac_secret_file` | string |  | webhook: file holding the HMAC key. |
 | `notify.channel[].hmac_secret_env` | string |  | webhook: environment variable holding the HMAC key. |
-| `notify.channel[].timeout` | duration | `5s` | webhook: request timeout. |
-| `notify.channel[].retry` | table |  | webhook: retry policy. |
+| `notify.channel[].timeout` | duration | `5s` | Request timeout (every channel; SMTP: per command). |
+| `notify.channel[].retry` | table |  | Retry policy (every channel); max counts the attempts after the first. |
 | `notify.channel[].retry.max` | int | `3` | Maximum attempts. |
 | `notify.channel[].retry.backoff` | duration | `1s` | Initial backoff. |
 | `notify.channel[].retry.max_backoff` | duration | `30s` | Backoff upper bound. |

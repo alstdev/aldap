@@ -1,0 +1,15 @@
+ALDAP {{.Hostname}}: {{.Event}} ({{.Level}})
+{{- if .Profile}}
+Profile: {{.Profile}}{{end}}
+{{- if .ClientIP}}
+Client: {{.ClientIP}}{{end}}
+{{- if .Account}}
+Account: {{.Account}}{{else if .AccountHash}}
+Account hash: {{.AccountHash}}{{end}}
+{{- if .Reason}}
+Reason: {{.Reason}}{{end}}
+{{- if .Upstream}}
+Upstream: {{.Upstream}}{{end}}
+{{- range $k, $v := .Data}}
+{{$k}}: {{join $v ", "}}{{end}}
+Time: {{.TS}}

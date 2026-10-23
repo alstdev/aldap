@@ -1,0 +1,5 @@
+ALDAP {{.Hostname}}: attack in progress — {{get .Data "kind"}} ({{.Level}})
+Attack: {{get .Data "attack_id"}}
+Sources: {{join (get .Data "ips") ", "}}
+Accounts: {{get .Data "accounts_count"}}, failures: {{get .Data "failures"}}, rate: {{get .Data "rate_per_min"}}/min
+Since: {{get .Data "first_seen"}}, last: {{get .Data "last_seen"}}
