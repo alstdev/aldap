@@ -235,7 +235,8 @@ func (t *telegram) close() {
 }
 
 // virola posts to the Virola Web API: POST /api/v1/rooms/{room_id}/messages
-// or /api/v1/users/{user_id}/messages, Authorization: Bearer, {"content"}.
+// or /api/v1/users/{user_id}/messages (path_template overrides the path),
+// Authorization: Bearer, {"content"}.
 type virola struct {
 	client *http.Client
 	url    string
@@ -247,11 +248,7 @@ func newVirola(c config.Channel, tok secret.Value, o Options) (*virola, error) {
 	if err != nil {
 		return nil, err
 	}
-	base := strings.TrimRight(c.BaseURL, "/")
-	u := fmt.Sprintf("%s/api/v1/rooms/%d/messages", base, c.RoomID)
-	if c.UserID != 0 {
-		u = fmt.Sprintf("%s/api/v1/users/%d/messages", base, c.UserID)
-	}
+	u := strings.TrimRight(c.BaseURL, "/") + c.VirolaPath()
 	return &virola{client: cl, url: u, token: tok}, nil
 }
 

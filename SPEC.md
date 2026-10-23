@@ -281,7 +281,7 @@ ALDAP_API_ENABLED=true
 | `channel.min_level` | `low/medium/high` |
 | `channel.template_dir` | перевизначення вбудованих шаблонів |
 | **telegram** | `bot_token[_file]`, `chat_id`, `parse_mode=MarkdownV2`, `api_base` (дефолт `https://api.telegram.org`) |
-| **virola** | `base_url` (`https://host:port`), `token[_file]` (Web API Access Token; заголовок `Authorization: Bearer <token>`), `room_id` або `user_id`; запит `POST /api/v1/rooms/{room_id}/messages` або `POST /api/v1/users/{user_id}/messages` з тілом `{"content": "..."}`; `tls_ca_file`, `tls_insecure_skip_verify` |
+| **virola** | `base_url` (`https://host:port`), `token[_file]` (Web API Access Token; заголовок `Authorization: Bearer <token>`), `room_id` або `user_id`; запит `POST /api/v1/rooms/{room_id}/messages` або `POST /api/v1/users/{user_id}/messages` з тілом `{"content": "..."}`; `path_template` — опційне перевизначення шляху з `{room_id}`/`{user_id}`; `tls_ca_file`, `tls_insecure_skip_verify` |
 | **email** | `smtp_host`, `smtp_port`, `tls=starttls/tls/none`, `username`, `password[_file]`, `from`, `to=[...]`, `subject_template` |
 | **webhook** | `url`, `method=POST`, `headers`, `body_template` (Go text/template → будь-який JSON), `hmac_secret[_file]`, `timeout`, `retry.*` |
 

@@ -5,6 +5,9 @@
 package config
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/alstdev/aldap/internal/secret"
 )
 
@@ -501,6 +504,7 @@ type Channel struct {
 	TokenEnv              string        `toml:"token_env" doc:"virola: environment variable holding the access token."`
 	RoomID                int64         `toml:"room_id" doc:"virola: destination room id."`
 	UserID                int64         `toml:"user_id" doc:"virola: destination user id."`
+	PathTemplate          string        `toml:"path_template" doc:"virola: request path under base_url; {room_id} or {user_id} is substituted. Empty: /api/v1/rooms/{room_id}/messages or /api/v1/users/{user_id}/messages (Virola Web API)."`
 	TLSCAFile             string        `toml:"tls_ca_file" doc:"virola: CA bundle used to verify the server."`
 	TLSInsecureSkipVerify bool          `toml:"tls_insecure_skip_verify" doc:"virola: disable certificate verification (warned)."`
 
@@ -536,6 +540,25 @@ func (c *Channel) BotTokenSource() secret.Source {
 // TokenSource returns the virola token source.
 func (c *Channel) TokenSource() secret.Source {
 	return secret.Source{Inline: c.Token, File: c.TokenFile, Env: c.TokenEnv}
+}
+
+// Virola message paths of the Virola Web API (virola.io/web-api/docs/messages).
+const (
+	VirolaRoomPath = "/api/v1/rooms/{room_id}/messages"
+	VirolaUserPath = "/api/v1/users/{user_id}/messages"
+)
+
+// VirolaPath returns the virola request path with the destination id
+// substituted: path_template, or the documented path for room_id/user_id.
+func (c *Channel) VirolaPath() string {
+	tpl := c.PathTemplate
+	if tpl == "" {
+		tpl = VirolaRoomPath
+		if c.UserID != 0 {
+			tpl = VirolaUserPath
+		}
+	}
+	return strings.NewReplacer("{room_id}", strconv.FormatInt(c.RoomID, 10), "{user_id}", strconv.FormatInt(c.UserID, 10)).Replace(tpl)
 }
 
 // PasswordSource returns the SMTP password source.
