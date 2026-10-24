@@ -1,0 +1,2 @@
+TARGET  KEY         SCORE  LOCKED  REASONS          FIRST SEEN            LAST SEEN
+ip      192.0.2.10  7.5    yes     bind_fail,spray  2026-10-23T11:00:00Z  2026-10-23T11:59:00Z

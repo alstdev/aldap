@@ -38,8 +38,15 @@ func (Inline) String() string { return Redacted }
 // GoString keeps %#v from printing the value.
 func (Inline) GoString() string { return "secret.Inline(" + Redacted + ")" }
 
-// MarshalText redacts the value for JSON, YAML and similar encoders.
-func (Inline) MarshalText() ([]byte, error) { return []byte(Redacted), nil }
+// MarshalText redacts the value for JSON, TOML and similar encoders. An
+// unset value encodes empty, so a rendered configuration loads back with
+// the key unset instead of an inline secret "***".
+func (s Inline) MarshalText() ([]byte, error) {
+	if s == "" {
+		return []byte{}, nil
+	}
+	return []byte(Redacted), nil
+}
 
 // LogValue redacts the value for log/slog.
 func (Inline) LogValue() slog.Value { return slog.StringValue(Redacted) }

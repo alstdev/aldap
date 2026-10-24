@@ -469,6 +469,7 @@ func TestValidate_Rules(t *testing.T) {
 		{"upstream_pw_without_dn", "[upstream.u]\nservers = [\"ldaps://x\"]\nbind_password_env = \"P\"\n", "upstream.u.bind_dn", "required", false},
 		{"upstream_dn_without_pw", "[upstream.u]\nservers = [\"ldaps://x\"]\nbind_dn = \"cn=a\"\n", "upstream.u.bind_password", "required", false},
 		{"upstream_two_sources", "[upstream.u]\nservers = [\"ldaps://x\"]\nbind_dn = \"cn=a\"\nbind_password = \"a\"\nbind_password_env = \"P\"\n", "upstream.u.bind_password", "exactly one", false},
+		{"upstream_masked_secret", "[upstream.u]\nservers = [\"ldaps://x\"]\nbind_dn = \"cn=a\"\nbind_password = \"***\"\n", "upstream.u.bind_password", "masked placeholder", false},
 		{"upstream_inline_warn", "[upstream.u]\nservers = [\"ldaps://x\"]\nbind_dn = \"cn=a\"\nbind_password = \"a\"\n", "upstream.u.bind_password", "inline", true},
 		{"upstream_bad_dn", "[upstream.u]\nservers = [\"ldaps://x\"]\nbase_dn = \"nodn\"\n", "upstream.u.base_dn", "expected '='", false},
 		{"upstream_kind", "[upstream.u]\nservers = [\"ldaps://x\"]\nkind = \"ldap\"\n", "upstream.u.kind", "not one of", false},
@@ -495,6 +496,11 @@ func TestValidate_Rules(t *testing.T) {
 		{"profile_bad_virtual_base", "[profile.p]\nlisten = [\":1\"]\nvirtual_base = \"ou=x,,dc=aldap\"\n", "profile.p.virtual_base", "syntax error", false},
 		{"profile_bad_base", "[profile.p]\nlisten = [\":1\"]\nbases = [\"OU=Office;DC=corp\"]\n", "profile.p.bases[0]", "unescaped ';'", false},
 		{"profile_bad_computed", "[profile.p]\nlisten = [\":1\"]\n[profile.p.attrs.computed]\nmail = \"{{ .x \"\n", "profile.p.attrs.computed.mail", "template", false},
+		{"profile_computed_unknown_func", "[profile.p]\nlisten = [\":1\"]\n[profile.p.attrs.computed]\nmail = \"{{ .x | capitalize }}\"\n", "profile.p.attrs.computed.mail", `function "capitalize" not defined`, false},
+		{"profile_computed_notify_func", "[profile.p]\nlisten = [\":1\"]\n[profile.p.attrs.computed]\nmail = \"{{ md .x }}\"\n", "profile.p.attrs.computed.mail", `function "md" not defined`, false},
+		{"profile_computed_bad_regex", "[profile.p]\nlisten = [\":1\"]\n[profile.p.attrs.computed]\nuid = '{{ regexReplace \"(\" \"\" .sAMAccountName }}'\n", "profile.p.attrs.computed.uid", "regexReplace pattern", false},
+		{"profile_computed_regex_arity", "[profile.p]\nlisten = [\":1\"]\n[profile.p.attrs.computed]\nuid = '{{ .sAMAccountName | regexReplace \"a\" }}'\n", "profile.p.attrs.computed.uid", "got 2 arguments", false},
+		{"profile_honeytoken_template", "[profile.p]\nlisten = [\":1\"]\n[profile.p.honeytoken_template]\nmail = \"{{ .user | nope }}\"\n", "profile.p.honeytoken_template.mail", `function "nope" not defined`, false},
 		{"profile_client_bind_dn", "[profile.p]\nlisten = [\":1\"]\n[profile.p.client_bind]\npassword_env = \"X\"\n", "profile.p.client_bind.dn", "required", false},
 		{"profile_client_bind_pw", "[profile.p]\nlisten = [\":1\"]\n[profile.p.client_bind]\ndn = \"cn=app\"\n", "profile.p.client_bind.password", "required", false},
 		{"profile_mock_file", "[profile.p]\nlisten = [\":1\"]\nmode = \"mock\"\n", "profile.p.mock.file", "required", false},
@@ -733,6 +739,27 @@ func TestConfigDocsInSync(t *testing.T) {
 	for _, k := range keys {
 		if k.Type == "secret" && k.Default != "" {
 			t.Errorf("%s: secret must have no rendered default", k.Path)
+		}
+	}
+}
+
+func TestValidate_ProfileTemplateFuncs(t *testing.T) {
+	t.Parallel()
+	body := "[profile.p]\nlisten = [\":1\"]\n[profile.p.attrs.computed]\n" +
+		"a = '{{ or .mail .userPrincipalName }}'\n" +
+		"b = '{{ printf \"%s-%s\" .givenName .sn | lower }}'\n" +
+		"c = '{{ .cn | upper | trim }}'\n" +
+		"d = '{{ .mail | default \"none\" }}'\n" +
+		"e = '{{ first .mail .userPrincipalName }}'\n" +
+		"f = '{{ join \" \" .givenName .sn }}'\n" +
+		"g = '{{ regexReplace \"@.*$\" \"\" .userPrincipalName }}'\n" +
+		"h = '{{ .userPrincipalName | regexReplace \"@.*$\" \"\" }}'\n" +
+		"i = '{{ if .mail }}{{ .mail | lower }}{{ else }}{{ regexReplace \"^(.)\" \"$1\" .cn }}{{ end }}'\n" +
+		"[profile.p.honeytoken_template]\nmail = '{{ .user | lower }}@{{ .domain }}'\n"
+	rep := validate(mustLoad(t, body))
+	for _, is := range append(rep.Errors, rep.Warnings...) {
+		if strings.Contains(is.Path, "computed") || strings.Contains(is.Path, "honeytoken_template") {
+			t.Errorf("unexpected issue %v", is)
 		}
 	}
 }

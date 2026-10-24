@@ -1,0 +1,7 @@
+[server]
+log_level = "info"
+
+[upstream.ad]
+servers = ["ldaps://dc1.corp.example:636"]
+bind_dn = "CN=svc,DC=corp,DC=example"
+bind_password = "***"

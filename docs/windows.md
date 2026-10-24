@@ -31,7 +31,17 @@ Run the daemon from an **elevated** PowerShell (`aldap.exe run --config ...`).
 - [ ] From another host `\\<host>\pipe\aldap` is refused (remote clients rejected).
 - [ ] After `Ctrl+C` the pipe is gone and a new `aldap.exe run` starts.
 
+## aldapctl over the pipe
+
+From an **elevated** PowerShell (the pipe ACL admits SYSTEM and Administrators only):
+
+- [ ] `aldapctl.exe status` (default `--socket \\.\pipe\aldap`) prints the status; a non-elevated shell
+      gets `cannot reach aldap at IPC socket \\.\pipe\aldap: ... Access is denied`.
+- [ ] `aldapctl.exe lock 192.0.2.7 --for 1m --yes`, `aldapctl.exe locks`, `aldapctl.exe unlock 192.0.2.7 --yes`.
+- [ ] `aldapctl.exe` without a command opens the TUI in Windows Terminal and in the classic console
+      (`conhost`, 16 colors); `?` lists the keys, `q` quits; `$EDITOR` unset → `e` on Config opens Notepad.
+- [ ] `aldapctl.exe --url https://<host>:8636 --token-file C:\path\token --ca-file ca.pem status` over TCP.
+
 ## Not yet available
 
-- `aldapctl` over the pipe (`--socket`) — Stage 10.
 - `aldap.exe service install` (`kardianos/service`, Event Log) — Stage 12.

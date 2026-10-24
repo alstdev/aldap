@@ -70,6 +70,7 @@ components:
       type: object
       properties:
         version: { type: string }
+        go_version: { type: string, description: "Go runtime of the daemon (runtime.Version)" }
         uptime_s: { type: integer }
         lockdown: { type: boolean }
         learning: { type: boolean }
@@ -113,6 +114,7 @@ components:
       type: object
       properties:
         ok: { type: boolean }
+        dry_run: { type: boolean, description: "true when the body was only validated" }
         backup: { type: string, description: "path of aldap.toml.bak.<ts>" }
   responses:
     Err:
@@ -220,9 +222,12 @@ paths:
         Validated in memory first (400, file untouched). Then the previous file is copied
         to aldap.toml.bak.<ts>, the new one written atomically (.tmp + rename) and reloaded;
         when the reload fails the previous file is restored and the running configuration kept.
+        With dry_run=true the body is only validated (no backup, no write, no reload).
+        An inline secret equal to the masked placeholder "***" of GET /v1/config is refused (400).
+      parameters: [{ name: dry_run, in: query, schema: { type: boolean, default: false } }]
       requestBody: { required: true, content: { application/toml: {} } }
       responses:
-        "200": { description: applied, content: { application/json: { schema: { $ref: "#/components/schemas/ApplyResult" } } } }
+        "200": { description: applied (or valid with dry_run), content: { application/json: { schema: { $ref: "#/components/schemas/ApplyResult" } } } }
         "400": { $ref: "#/components/responses/Err" }
         "409": { $ref: "#/components/responses/Err" }
         "413": { $ref: "#/components/responses/Err" }
@@ -237,6 +242,17 @@ paths:
       parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
       description: Asks the replica for a sync now (the outcome is the replica_synced or replica_sync_failed event); 409 for a profile without cache.mode = replica.
       responses: { "202": { description: sync started }, "404": { $ref: "#/components/responses/Err" }, "409": { $ref: "#/components/responses/Err" } }
+  /v1/profiles/{name}/record:
+    post:
+      x-scope: admin
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      description: Starts or stops request recording of the profile (record/replay, Stage 11); 501 until the recorder exists.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [state], properties: { state: { type: string, enum: ["on", "off"] } } } } } }
+      responses:
+        "200": { description: recording state, content: { application/json: { schema: { type: object, properties: { record: { type: string, enum: ["on", "off"] } } } } } }
+        "400": { $ref: "#/components/responses/Err" }
+        "404": { $ref: "#/components/responses/Err" }
+        "501": { $ref: "#/components/responses/Err" }
   /v1/profiles/{name}/test:
     post:
       x-scope: admin

@@ -1,0 +1,3 @@
+NAME    MODE   TRANSPORT      LISTEN          UPSTREAM  CACHE  VIRTUAL BASE
+virola  proxy  ldaps          :636            ad        ttl    dc=aldap
+app     mock   ldap+starttls  127.0.0.1:1389  -         none   dc=app

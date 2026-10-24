@@ -29,6 +29,13 @@ var NotifyLockAliases = map[string]string{"lock_account": "account", "lock_ip": 
 // list equal to the implementation.
 var NotifyTemplateFuncs = []string{"get", "join", "json", "md", "html", "upper", "lower", "default"}
 
+// ProfileTemplateFuncs names the functions available in profile templates
+// (attrs.computed and honeytoken_template, internal/profile) besides the
+// text/template built-ins (or, printf, …); the validator parses templates
+// with stubs of these names. TestTemplateFuncsInSync (internal/profile)
+// keeps the list equal to the implementation.
+var ProfileTemplateFuncs = []string{"lower", "upper", "trim", "default", "first", "join", "regexReplace"}
+
 // DefaultChannelEvents is the event list of a notification channel without an explicit one.
 var DefaultChannelEvents = []string{
 	"attack_start", "attack_summary", "attack_end", "lock_account",
@@ -37,7 +44,9 @@ var DefaultChannelEvents = []string{
 
 func d(v time.Duration) Duration { return Duration(v) }
 
-func defaultIPCSocket() string {
+// DefaultIPCSocket is the default [server].ipc_socket of the platform; aldapctl
+// dials it without reading the configuration.
+func DefaultIPCSocket() string {
 	if runtime.GOOS == "windows" {
 		return `\\.\pipe\aldap`
 	}
@@ -51,7 +60,7 @@ func Default() *Config {
 		Server: Server{
 			LogLevel:        "info",
 			LogFormat:       "text",
-			IPCSocket:       defaultIPCSocket(),
+			IPCSocket:       DefaultIPCSocket(),
 			ShutdownTimeout: d(30 * time.Second),
 			MaxConnections:  1024,
 		},

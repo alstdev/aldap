@@ -1,0 +1,2 @@
+{"schema":"aldap.event.v1","ts":"2026-10-23T11:58:00.000Z","id":"01J0000000000000000000001","seq":41,"event":"bind_fail","level":"medium","host":"dc-proxy","profile":"virola","client_ip":"192.0.2.10","account":"jdoe","reason":"invalid_credentials","data":{"attempt":3}}
+{"schema":"aldap.event.v1","ts":"2026-10-23T11:59:00.000Z","id":"01J0000000000000000000002","seq":42,"event":"lock","level":"high","host":"dc-proxy","profile":"virola","client_ip":"192.0.2.10","data":{"target":"ip","key":"192.0.2.10","until":"2026-10-23T12:15:00Z"}}

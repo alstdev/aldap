@@ -1,0 +1,7 @@
+result: Success (0)  entries: 1  upstream queries: 1  3.2ms
+effective filter: (&(objectClass=user)(sAMAccountName=jdoe))
+denied attributes: telephoneNumber
+
+dn: uid=jdoe,ou=users,dc=aldap
+cn: John Doe
+mail: jdoe@corp.example
