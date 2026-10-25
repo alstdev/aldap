@@ -348,6 +348,27 @@ func TestBusFromConfig_Cases(t *testing.T) {
 		t.Error("missing hmac file accepted")
 	}
 	bad = config.Default().Events
+	bad.Webhooks = []config.Webhook{{URL: "http://x", HeadersFile: filepath.Join(t.TempDir(), "missing")}}
+	if err := b.Configure(bad, ConfigureOptions{}); err == nil || !strings.Contains(err.Error(), "headers_file") {
+		t.Errorf("missing headers file accepted: %v", err)
+	}
+	hf := filepath.Join(t.TempDir(), "h.toml")
+	if err := os.WriteFile(hf, []byte("Authorization = \"Bearer t\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var warns strings.Builder
+	good := config.Default().Events
+	good.Webhooks = []config.Webhook{{Name: "w", URL: "http://127.0.0.1:1/x", Headers: config.Headers{"X-Source": "aldap"}, HeadersFile: hf}}
+	if err := b.Configure(good, ConfigureOptions{Logger: slog.New(slog.NewTextHandler(&warns, nil))}); err != nil {
+		t.Fatal(err)
+	}
+	if ws := b.sinks[len(b.sinks)-1].sink.(*WebhookSink); ws.Headers["Authorization"] != "Bearer t" || ws.Headers["X-Source"] != "aldap" {
+		t.Errorf("webhook headers: %d", len(ws.Headers))
+	}
+	if !strings.Contains(warns.String(), "more permissive") || strings.Contains(warns.String(), "Bearer") {
+		t.Errorf("permission warning: %s", warns.String())
+	}
+	bad = config.Default().Events
 	bad.File.Enabled, bad.File.Path = true, filepath.Join(t.TempDir(), "nodir", "x")
 	if err := b.Configure(bad, ConfigureOptions{}); err == nil {
 		t.Error("unwritable file accepted")

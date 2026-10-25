@@ -85,7 +85,7 @@ escape), `html v`, `upper`, `lower`, `default "-" v`.
 | telegram | `POST {api_base}/bot<token>/sendMessage` `{"chat_id","text","parse_mode"}`; `retry_after` of a 429 is honoured |
 | virola | `POST {base_url}/api/v1/rooms/{room_id}/messages` or `/api/v1/users/{user_id}/messages` (`path_template` overrides the path, e.g. `/api/v1/rooms/{room_id}/text-messages`; the id placeholder is required), `Authorization: Bearer <token>`, `{"content": "…"}`; `tls_ca_file`, `tls_insecure_skip_verify` (warned) |
 | email | `tls = "tls"` (implicit TLS), `"starttls"` (STARTTLS mandatory, refused when not offered), `"none"` (warned; AUTH PLAIN is then refused unless the server is loopback) |
-| webhook | `method` (`POST`/`PUT`/`PATCH`), `headers`, `X-ALDAP-Signature: sha256=<hmac>` with `hmac_secret` (as `[[events.webhook]]`) |
+| webhook | `method` (`POST`/`PUT`/`PATCH`), `headers` (values render `***`), `headers_file` (TOML table of headers for credentials, merged with `headers`), `X-ALDAP-Signature: sha256=<hmac>` with `hmac_secret` (as `[[events.webhook]]`) |
 
 - `timeout` and `retry` apply to every channel (`timeout` per SMTP command for email). `retry.max` counts the
   attempts after the first; the backoff doubles from `retry.backoff` up to `retry.max_backoff`; a delay

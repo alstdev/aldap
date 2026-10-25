@@ -798,6 +798,7 @@ func (v Validator) validateEvents(path string, e *Events, rep *Report) {
 		positive(rep, p+".timeout", w.Timeout)
 		validateRetry(rep, p+".retry", w.Retry)
 		v.checkSecret(rep, p+".hmac_secret", w.HMACSecretSource(), false)
+		v.checkHeaders(rep, p, w.Headers, w.HeadersFile)
 		atLeast(rep, p+".queue_size", w.QueueSize, 1)
 		oneOf(rep, p+".on_overflow", w.OnOverflow, "drop_oldest", "block")
 	}
@@ -1047,6 +1048,7 @@ func (v Validator) validateWebhookChannel(p string, c *Channel, rep *Report) {
 	oneOf(rep, p+".method", c.Method, "POST", "PUT", "PATCH")
 	checkNotifyTemplate(rep, p+".body_template", c.BodyTemplate)
 	v.checkSecret(rep, p+".hmac_secret", c.HMACSecretSource(), false)
+	v.checkHeaders(rep, p, c.Headers, c.HeadersFile)
 }
 
 // Validate checks the section on its own.

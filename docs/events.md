@@ -60,7 +60,7 @@ discards the oldest queued record; `block` makes `Emit` wait.
 | stdout | `[events.stdout]` `enabled`, `format = json` | one JSON object per line on the process stdout |
 | file | `[events.file]` `path`, `max_size_mb`, `max_files`, `compress` | append, 0600; rotation by size to `path.1[.gz] … path.<max_files>[.gz]`, gzip when `compress` |
 | syslog | `[events.syslog]` `network = udp|tcp|unix`, `address`, `facility` | RFC 5424: `<PRI>1 ts host aldap pid <event> - <json>`; severity warning/notice/info for high/medium/low; newline framing on stream sockets; one reconnect per failed write |
-| webhook | `[[events.webhook]]` `url`, `events`, `batch_size` (100), `batch_interval` (2s), `timeout` (5s), `retry.max/backoff/max_backoff`, `hmac_secret[_file|_env]`, `headers`, `tls_ca_file`, `queue_size`, `on_overflow` | POST of a JSON array; `X-ALDAP-Signature: sha256=<hex HMAC of the body>`; retries on network errors, 429 and 5xx with doubling backoff; other 4xx drop the batch |
+| webhook | `[[events.webhook]]` `url`, `events`, `batch_size` (100), `batch_interval` (2s), `timeout` (5s), `retry.max/backoff/max_backoff`, `hmac_secret[_file|_env]`, `headers` (values render `***`), `headers_file` (TOML table of headers for credentials), `tls_ca_file`, `queue_size`, `on_overflow` | POST of a JSON array; `X-ALDAP-Signature: sha256=<hex HMAC of the body>`; retries on network errors, 429 and 5xx with doubling backoff; other 4xx drop the batch |
 
 ## Schema test
 

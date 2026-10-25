@@ -285,12 +285,12 @@ type webhook struct {
 	ua      string
 }
 
-func newWebhook(c config.Channel, key secret.Value, o Options) (*webhook, error) {
+func newWebhook(c config.Channel, key secret.Value, headers map[string]string, o Options) (*webhook, error) {
 	cl, err := httpClient(c.Timeout.D(), "", false, o.RootCAs)
 	if err != nil {
 		return nil, err
 	}
-	return &webhook{client: cl, url: c.URL, method: c.Method, headers: c.Headers, key: key, ua: o.UserAgent}, nil
+	return &webhook{client: cl, url: c.URL, method: c.Method, headers: headers, key: key, ua: o.UserAgent}, nil
 }
 
 func (w *webhook) send(ctx context.Context, m message) error {

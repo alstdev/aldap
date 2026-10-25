@@ -310,8 +310,13 @@ url           = "https://itsm.corp.local/api/incidents"
 method        = "POST"
 body_template = '{"title":"ALDAP {{.Event}} {{.Profile}}","severity":"{{.Level}}","source_ip":"{{.ClientIP}}","details":{{.DataJSON}}}'
 hmac_secret_file = "/run/secrets/itsm_hmac"
+# Credentials go to headers_file, a TOML table (mode 0600), e.g.
+#   Authorization = "Bearer <token>"
+# Values of inline `headers` render "***" in GET /v1/config and bundles;
+# an inline Authorization / Cookie / X-API-Key is warned by `aldap check`.
+headers_file  = "/run/secrets/itsm_headers.toml"
 [notify.channel.headers]
-Authorization = "Bearer replace-me-via-secret"   # prefer headers_file
+X-Source = "aldap"
 
 # ------------------------------------------------------------------ management API
 [api]

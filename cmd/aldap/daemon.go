@@ -193,7 +193,7 @@ func buildDaemon(cfg *config.Config, o daemonOptions) (*daemon, error) {
 		state.ids.Reconfigure(cfg.Intrusion)
 	}
 	state.lockdownAuto.Store(cfg.Ratelimit.Lockdown.Auto)
-	if err := state.bus.Configure(cfg.Events, events.ConfigureOptions{Stdout: o.EventsOut, Secrets: o.Secrets, UserAgent: "aldap/" + version}); err != nil {
+	if err := state.bus.Configure(cfg.Events, events.ConfigureOptions{Stdout: o.EventsOut, Secrets: o.Secrets, UserAgent: "aldap/" + version, Logger: log}); err != nil {
 		return nil, err
 	}
 	if err := state.notify.Configure(cfg.Notify); err != nil {

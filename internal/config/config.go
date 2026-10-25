@@ -446,20 +446,21 @@ type SyslogSink struct {
 
 // Webhook holds one webhook sink ([[events.webhook]]).
 type Webhook struct {
-	Name           string            `toml:"name" doc:"Unique sink name."`
-	URL            string            `toml:"url" doc:"Destination URL."`
-	Events         []string          `toml:"events" doc:"Event types delivered; empty delivers all."`
-	BatchSize      int               `toml:"batch_size" doc:"Events per request."`
-	BatchInterval  Duration          `toml:"batch_interval" doc:"Maximum wait before a partial batch is sent."`
-	Timeout        Duration          `toml:"timeout" doc:"Request timeout."`
-	Retry          Retry             `toml:"retry" doc:"Retry policy."`
-	HMACSecret     secret.Inline     `toml:"hmac_secret" doc:"HMAC key for X-ALDAP-Signature, inline (warned)."`
-	HMACSecretFile string            `toml:"hmac_secret_file" doc:"File holding the HMAC key."`
-	HMACSecretEnv  string            `toml:"hmac_secret_env" doc:"Environment variable holding the HMAC key."`
-	Headers        map[string]string `toml:"headers" doc:"Extra request headers."`
-	TLSCAFile      string            `toml:"tls_ca_file" doc:"CA bundle used to verify the destination."`
-	QueueSize      int               `toml:"queue_size" doc:"Pending events kept when the destination is slow."`
-	OnOverflow     string            `toml:"on_overflow" doc:"drop_oldest or block when the queue is full."`
+	Name           string        `toml:"name" doc:"Unique sink name."`
+	URL            string        `toml:"url" doc:"Destination URL."`
+	Events         []string      `toml:"events" doc:"Event types delivered; empty delivers all."`
+	BatchSize      int           `toml:"batch_size" doc:"Events per request."`
+	BatchInterval  Duration      `toml:"batch_interval" doc:"Maximum wait before a partial batch is sent."`
+	Timeout        Duration      `toml:"timeout" doc:"Request timeout."`
+	Retry          Retry         `toml:"retry" doc:"Retry policy."`
+	HMACSecret     secret.Inline `toml:"hmac_secret" doc:"HMAC key for X-ALDAP-Signature, inline (warned)."`
+	HMACSecretFile string        `toml:"hmac_secret_file" doc:"File holding the HMAC key."`
+	HMACSecretEnv  string        `toml:"hmac_secret_env" doc:"Environment variable holding the HMAC key."`
+	Headers        Headers       `toml:"headers" doc:"Extra request headers; values render \"***\". Credentials belong in headers_file."`
+	HeadersFile    string        `toml:"headers_file" doc:"File with a TOML table of extra request headers (credentials such as Authorization); merged with headers, a name in both is an error."`
+	TLSCAFile      string        `toml:"tls_ca_file" doc:"CA bundle used to verify the destination."`
+	QueueSize      int           `toml:"queue_size" doc:"Pending events kept when the destination is slow."`
+	OnOverflow     string        `toml:"on_overflow" doc:"drop_oldest or block when the queue is full."`
 }
 
 // HMACSecretSource returns the webhook HMAC key source.
@@ -521,15 +522,16 @@ type Channel struct {
 	SubjectTemplate string        `toml:"subject_template" doc:"email: subject template."`
 
 	// webhook
-	URL            string            `toml:"url" doc:"webhook: destination URL."`
-	Method         string            `toml:"method" doc:"webhook: HTTP method."`
-	Headers        map[string]string `toml:"headers" doc:"webhook: extra request headers."`
-	BodyTemplate   string            `toml:"body_template" doc:"webhook: Go text/template producing the request body."`
-	HMACSecret     secret.Inline     `toml:"hmac_secret" doc:"webhook: HMAC key, inline (warned)."`
-	HMACSecretFile string            `toml:"hmac_secret_file" doc:"webhook: file holding the HMAC key."`
-	HMACSecretEnv  string            `toml:"hmac_secret_env" doc:"webhook: environment variable holding the HMAC key."`
-	Timeout        Duration          `toml:"timeout" doc:"Request timeout (every channel; SMTP: per command)."`
-	Retry          Retry             `toml:"retry" doc:"Retry policy (every channel); max counts the attempts after the first."`
+	URL            string        `toml:"url" doc:"webhook: destination URL."`
+	Method         string        `toml:"method" doc:"webhook: HTTP method."`
+	Headers        Headers       `toml:"headers" doc:"webhook: extra request headers; values render \"***\". Credentials belong in headers_file."`
+	HeadersFile    string        `toml:"headers_file" doc:"webhook: file with a TOML table of extra request headers (credentials such as Authorization); merged with headers, a name in both is an error."`
+	BodyTemplate   string        `toml:"body_template" doc:"webhook: Go text/template producing the request body."`
+	HMACSecret     secret.Inline `toml:"hmac_secret" doc:"webhook: HMAC key, inline (warned)."`
+	HMACSecretFile string        `toml:"hmac_secret_file" doc:"webhook: file holding the HMAC key."`
+	HMACSecretEnv  string        `toml:"hmac_secret_env" doc:"webhook: environment variable holding the HMAC key."`
+	Timeout        Duration      `toml:"timeout" doc:"Request timeout (every channel; SMTP: per command)."`
+	Retry          Retry         `toml:"retry" doc:"Retry policy (every channel); max counts the attempts after the first."`
 }
 
 // BotTokenSource returns the telegram bot token source.

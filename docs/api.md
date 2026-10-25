@@ -102,8 +102,9 @@ the buffer are lost; compare the first `id` with `N+1` to detect that.
 - `GET /v1/config` — the effective configuration (file, includes, `ALDAP_*`, defaults) as TOML; every
   inline secret that is set is `"***"`, an unset one is `""` (so the rendering loads back). A body whose
   inline secret is still the placeholder `"***"` is refused (`400 invalid_config`, "masked placeholder"):
-  give the secret or move it to `*_file` / `*_env` before `PUT`. Values of `headers` tables are not
-  masked (docs/DECISIONS.md, OPEN «headers in GET /v1/config»).
+  give the secret or move it to `*_file` / `*_env` before `PUT`. Every value of a `headers` table
+  (`[[events.webhook]]`, `[[notify.channel]]`) is `"***"` too, names stay; a `headers` value equal to
+  `"***"` is refused the same way — keep credentials in `headers_file`, which is rendered as its path.
 - `PUT /v1/config?dry_run=true` — step 1 below only: `{"ok": true, "dry_run": true}` or `400`; no backup,
   no write, no reload (`aldapctl config validate`, TUI `v`).
 - `PUT /v1/config` (TOML body, ≤ 4 MiB):

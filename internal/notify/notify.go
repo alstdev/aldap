@@ -447,20 +447,34 @@ func (n *Notifier) build(c config.Channel) (*channel, error) {
 			return nil, err
 		}
 	case "webhook":
-		var key secret.Value
-		if c.HMACSecretSource().IsSet() {
-			if key, err = resolve(c.HMACSecretSource()); err != nil {
-				return nil, fmt.Errorf("hmac_secret: %w", err)
-			}
-		}
-		ch.snd, err = newWebhook(c, key, n.o)
-		if err != nil {
+		if ch.snd, err = n.buildWebhook(c, resolve); err != nil {
 			return nil, err
 		}
 	default:
 		return nil, fmt.Errorf("unknown type %q", c.Type)
 	}
 	return ch, nil
+}
+
+// buildWebhook resolves the HMAC key and the headers (inline and
+// headers_file) of a webhook channel.
+func (n *Notifier) buildWebhook(c config.Channel, resolve func(secret.Source) (secret.Value, error)) (*webhook, error) {
+	var key secret.Value
+	if c.HMACSecretSource().IsSet() {
+		var err error
+		if key, err = resolve(c.HMACSecretSource()); err != nil {
+			return nil, fmt.Errorf("hmac_secret: %w", err)
+		}
+	}
+	headers, warns, err := config.LoadHeaders(n.o.Secrets, c.Headers, c.HeadersFile)
+	for _, w := range warns {
+		n.log.Warn("notify: headers_file", "channel", c.Name, "warning", w.Msg)
+	}
+	if err != nil {
+		key.Wipe()
+		return nil, err
+	}
+	return newWebhook(c, key, headers, n.o)
 }
 
 // matches applies events and min_level.
