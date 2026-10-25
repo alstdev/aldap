@@ -211,12 +211,17 @@ upstream_parallel = 4
 # [profile.virola.ratelimit.account]   # per-profile override
 # max_failures = 2
 
-# [profile.virola.shadow]
-# filter = "(&(objectCategory=person)(department=Sales))"
+# [profile.virola.shadow]          # evaluated in the background, reported as shadow_diff
+# filter       = "(&(objectCategory=person)(department=Sales))"
+# bases        = ["OU=Office,DC=corp,DC=local"]
+# max_parallel = 4                   # busy -> the search is not shadowed
+# timeout      = "10s"               # timed out -> not reported
 
-# [profile.virola.record]
-# enabled = false
-# file    = "/var/lib/aldap/record/virola.jsonl"
+# [profile.virola.record]           # client searches in the aldapctl replay format
+# enabled     = false                # state at start; aldapctl record start|stop at run time
+# file        = "/var/lib/aldap/record/virola.jsonl"   # mode 0600
+# max_size_mb = 100                  # then virola.jsonl.1 ... .<max_files>
+# max_files   = 5
 
 [profile.honeypot]
 listen       = [":1389"]

@@ -57,6 +57,16 @@ func (d *Directory) Test(ctx context.Context, req TestRequest) TestResult {
 	return out
 }
 
+// Evaluate runs the search pipeline like Test without the search event
+// and the metrics (shadow rules, internal/record). Whatever else the
+// pipeline reports goes to the directory's own Options, so a shadow
+// directory is built without events, guard and observer.
+func (d *Directory) Evaluate(ctx context.Context, req TestRequest) (listener.Result, []listener.Entry) {
+	c := listener.NewConn("c-shadow", d.rules.Name, &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	sc := &searchCtx{conn: c, start: d.now(), req: &listener.SearchRequest{Base: req.Base, Scope: req.Scope, Filter: req.Filter, Attrs: req.Attrs, SizeLimit: req.SizeLimit}}
+	return d.search(ctx, sc)
+}
+
 // String renders the result as LDIF-like text with the diagnostics.
 func (r TestResult) String() string {
 	s := ""

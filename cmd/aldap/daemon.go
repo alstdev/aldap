@@ -22,6 +22,7 @@ import (
 	"github.com/alstdev/aldap/internal/notify"
 	"github.com/alstdev/aldap/internal/profile"
 	"github.com/alstdev/aldap/internal/ratelimit"
+	"github.com/alstdev/aldap/internal/record"
 	"github.com/alstdev/aldap/internal/secret"
 	"github.com/alstdev/aldap/internal/tlsutil"
 	"github.com/alstdev/aldap/internal/upstream"
@@ -45,6 +46,7 @@ type runtimeState struct {
 	metrics      *metrics.Metrics
 	notify       *notify.Notifier
 	caches       cacheSet
+	recorders    recorderSet
 	lockdownAuto atomic.Bool
 }
 
@@ -68,6 +70,7 @@ func newRuntimeState(cfg *config.Config, log *slog.Logger, host string, secrets 
 
 // close flushes the event sinks and delivers the queued notifications.
 func (r *runtimeState) close() {
+	r.recorders.closeAll()
 	r.bus.Close()
 	r.notify.Close()
 }
@@ -140,6 +143,8 @@ type servedProfile struct {
 	tls       *tlsutil.Manager
 	dir       *vdir.Directory
 	cache     *profileCache
+	shadow    *record.Shadow
+	rec       *profileRecorder
 	servers   []*listener.Server
 	addrs     []string
 	listeners []net.Listener
@@ -293,7 +298,8 @@ func (d *daemon) buildProfile(name string, pcfg *config.Profile) (*servedProfile
 		}
 		clientPW = pw.Reveal()
 	}
-	rules, err := profile.Compile(name, pcfg, d.cfg.Upstreams[pcfg.Upstream], profile.Options{ClientPassword: clientPW, Argon2: d.opts.Argon2})
+	popts := profile.Options{ClientPassword: clientPW, Argon2: d.opts.Argon2}
+	rules, err := profile.Compile(name, pcfg, d.cfg.Upstreams[pcfg.Upstream], popts)
 	if err != nil {
 		return nil, err
 	}
@@ -316,6 +322,15 @@ func (d *daemon) buildProfile(name string, pcfg *config.Profile) (*servedProfile
 		case sp.cache.replica != nil:
 			dopts.Replica = sp.cache.replica
 		}
+	}
+	if sp.shadow, err = d.buildShadow(name, pcfg, up, dopts.Cache, popts); err != nil {
+		return nil, err
+	}
+	if sp.shadow != nil {
+		dopts.Taps = append(dopts.Taps, sp.shadow)
+	}
+	if sp.rec = d.state.recorders.get(name, pcfg, d.log); sp.rec != nil {
+		dopts.Taps = append(dopts.Taps, sp.rec.rec)
 	}
 	sp.dir = vdir.New(rules, up, dopts)
 	lcfg := listener.Config{
@@ -446,6 +461,7 @@ func (d *daemon) start(ctx context.Context) error {
 		}
 	}
 	d.started = true
+	d.state.recorders.commit(d.profiles, d.log)
 	for _, u := range d.upstreams {
 		u.Start(ctx)
 	}
@@ -576,6 +592,11 @@ func (d *daemon) stop() {
 			wg.Wait()
 			d.cancel()
 			d.wg.Wait()
+			for _, sp := range d.profiles {
+				if sp.shadow != nil {
+					sp.shadow.Close()
+				}
+			}
 		}
 		for _, u := range d.upstreams {
 			u.Close()

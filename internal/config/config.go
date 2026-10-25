@@ -397,14 +397,21 @@ type LockdownPatch struct {
 
 // Shadow holds shadow rules ([profile.<name>.shadow]).
 type Shadow struct {
-	Filter string   `toml:"filter" doc:"Shadow filter evaluated alongside the main one."`
-	Bases  []string `toml:"bases" doc:"Shadow bases evaluated alongside the main ones."`
+	Filter      string   `toml:"filter" doc:"Shadow filter evaluated alongside the main one (replaces filter for the shadow search)."`
+	Bases       []string `toml:"bases" doc:"Shadow bases evaluated alongside the main ones (replace bases for the shadow search)."`
+	MaxParallel int      `toml:"max_parallel" doc:"Shadow searches running at once; a search arriving when all are busy is not shadowed."`
+	Timeout     Duration `toml:"timeout" doc:"Upper bound of one shadow search; a shadow search that times out is not reported."`
 }
+
+// Enabled reports whether shadow rules are configured.
+func (s Shadow) Enabled() bool { return s.Filter != "" || len(s.Bases) > 0 }
 
 // Record holds request recording settings ([profile.<name>.record]).
 type Record struct {
-	Enabled bool   `toml:"enabled" doc:"Record client requests (never passwords) as JSONL."`
-	File    string `toml:"file" doc:"Output file."`
+	Enabled   bool   `toml:"enabled" doc:"Record client searches from the start (never passwords, bind data or paging cookies) as JSON lines in the replay format; aldapctl record start/stop switches it at run time."`
+	File      string `toml:"file" doc:"Output file (mode 0600); required to record."`
+	MaxSizeMB int    `toml:"max_size_mb" doc:"Rotate the file when it would exceed this size."`
+	MaxFiles  int    `toml:"max_files" doc:"Rotated files kept (file.1 … file.N); the oldest is removed."`
 }
 
 // Events holds the event stream settings ([events]).

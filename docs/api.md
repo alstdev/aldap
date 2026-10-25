@@ -59,7 +59,7 @@ All answers are JSON except `GET /v1/config` (`application/toml`), `/metrics` (P
 | `GET/PUT /v1/config`, `POST /v1/reload` | the configuration file and the serve loop |
 | `POST /v1/profiles/{name}/test` | `vdir.Directory.Test` (same pipeline as `aldap check --as-client`) |
 | `POST /v1/profiles/{name}/sync` | asks the replica of the profile for a sync now: `202`; `404` unknown profile, `409 not_replica` without `cache.mode = replica`; the outcome is `replica_synced` / `replica_sync_failed` (`docs/cache.md`) |
-| `POST /v1/profiles/{name}/record` | `{"state": "on"\|"off"}`; `404` unknown profile; `501 not_implemented` until the recorder (`internal/record`, Stage 11) exists |
+| `POST /v1/profiles/{name}/record` | `{"state": "on"\|"off"}` starts or stops the recorder of the profile (`internal/record`, docs/record.md); `404` unknown profile, `409 no_record_file` without `record.file`, `500` when the file cannot be opened (symbolic link, not a regular file, no permission) |
 | `POST /v1/baseline/{profile}/learn` | `ids.Engine.Learn` (the baseline window is process-wide) |
 | `GET /metrics` | `metrics.Handler` |
 | `GET /healthz`, `/readyz` | process alive; every `proxy` profile has an upstream server `up` |

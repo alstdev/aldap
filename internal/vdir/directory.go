@@ -69,6 +69,37 @@ type Options struct {
 	// Replica serves every search from memory (cache.mode = replica);
 	// binds still go to the upstream.
 	Replica ReplicaSource
+	// Taps observe every client search that ran the pipeline (record,
+	// shadow); they are called after the entries were written.
+	Taps []Tap
+}
+
+// Tap observes client searches (the recorder and the shadow rules,
+// internal/record). Search is called on the connection goroutine after
+// the entries were sent and must not block: work belongs on its own
+// goroutines. It must treat the TapSearch as read-only.
+type Tap interface {
+	Search(t TapSearch)
+}
+
+// TapSearch is one client search seen by a Tap: the request and the whole
+// result before paging (a paged search is reported once, at its first
+// page; pages served from the cookie are not reported). Searches refused
+// by the rate limiter are not reported.
+type TapSearch struct {
+	Conn      *listener.Conn
+	Base      string
+	Scope     listener.Scope
+	RawFilter string
+	// Filter is nil when RawFilter does not parse.
+	Filter    *ldapfilter.Filter
+	Attrs     []string
+	SizeLimit int
+	Result    listener.Result
+	Entries   []listener.Entry
+	// Local marks an answer that does not depend on the filter or the
+	// bases: root DSE, subschema, a base outside the virtual tree.
+	Local bool
 }
 
 // Directory serves one profile. It implements listener.Handler. up is nil
@@ -206,6 +237,7 @@ func (d *Directory) Search(ctx context.Context, c *listener.Conn, req *listener.
 	}
 	var res listener.Result
 	var entries []listener.Entry
+	var tap *TapSearch
 	switch {
 	case paging != nil && len(paging.Cookie) > 0:
 		if f, err := ldapfilter.Parse(req.Filter); err == nil {
@@ -214,6 +246,10 @@ func (d *Directory) Search(ctx context.Context, c *listener.Conn, req *listener.
 		res, entries = d.nextPage(c, sc, paging)
 	default:
 		res, entries = d.search(ctx, sc)
+		if len(d.o.Taps) > 0 {
+			tap = &TapSearch{Conn: c, Base: req.Base, Scope: req.Scope, RawFilter: req.Filter, Filter: sc.filter, Attrs: req.Attrs,
+				SizeLimit: req.SizeLimit, Result: res, Entries: entries, Local: sc.kind == profile.BaseRootDSE || sc.kind == profile.BaseSubschema || sc.kind == profile.BaseOutside}
+		}
 		if paging != nil && (res.Code == ldap.LDAPResultSuccess || res.Code == ldap.LDAPResultSizeLimitExceeded) {
 			res, entries = d.firstPage(c, sc, res, entries, paging)
 		}
@@ -227,6 +263,11 @@ func (d *Directory) Search(ctx context.Context, c *listener.Conn, req *listener.
 	}
 	d.emitSearch(sc, res, len(entries))
 	d.observeSearch(sc)
+	if tap != nil {
+		for _, t := range d.o.Taps {
+			t.Search(*tap)
+		}
+	}
 	return res
 }
 

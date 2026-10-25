@@ -2,7 +2,7 @@
 // in tests (TESTING.md 34). It implements the subset of JSON Schema
 // draft 2020-12 the file uses: type, const, enum, pattern, format
 // date-time, minimum, required, properties, additionalProperties, items,
-// allOf and if/then.
+// maxItems, allOf and if/then.
 package schematest
 
 import (
@@ -169,6 +169,9 @@ func validate(schema map[string]any, v any, path string) []error {
 		}
 	}
 	if arr, isArr := v.([]any); isArr {
+		if m, ok := schema["maxItems"].(float64); ok && float64(len(arr)) > m {
+			fail("%d items, at most %v", len(arr), m)
+		}
 		if items, ok := schema["items"].(map[string]any); ok {
 			for i, it := range arr {
 				errs = append(errs, validate(items, it, fmt.Sprintf("%s[%d]", path, i))...)

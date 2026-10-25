@@ -100,12 +100,14 @@
 Читати: SPEC §7, §8; TESTING «Рівні».
 - [x] CLI-команди §8 через API-клієнт (IPC/TCP).
 - [x] TUI (Bubble Tea): вкладки, live events, locks unlock/lock, config view/validate/apply, підтвердження, `?`.
-- [x] `bundle`, `record start/stop`, `replay`, `baseline learn`. (`record start/stop` → API `501` до рекордера Stage 11; формат `replay` — OPEN у DECISIONS.)
+- [x] `bundle`, `record start/stop`, `replay`, `baseline learn`. (`record start/stop` і формат `replay` — закрито у Stage 11.)
 **КП:** `go test` з `teatest`/модельними тестами на навігацію та unlock; CLI golden-тести виводу; `aldapctl --help` повний.
 
 ## Stage 11 — Record/replay, shadow
 Читати: SPEC §8 (`record`, `replay`), §4.2 (`shadow`); TESTING «Рівні».
-- [ ] `internal/record`: JSONL запис запитів (без паролів), replay проти профілю з порівнянням результатів (кількість, DN-набір) і звітом; `shadow.filter/bases` → `shadow_diff`.
+- [x] `internal/record`: JSONL запис запитів (без паролів), replay проти профілю з порівнянням результатів (кількість, DN-набір) і звітом; `shadow.filter/bases` → `shadow_diff`.
+- [x] Формат запису = формат replay (`record.Search`/`Read`/`Compare`, спільні з `aldapctl replay`); `POST /v1/profiles/{name}/record` і `aldapctl record start/stop` працюють (OPEN Stage 10 закрито).
+- [x] Записи без паролів, токенів, cookie paged results; файл 0600, ліміт розміру з ротацією; shadow у фоні з `max_parallel`/`timeout`, не впливає на відповідь і її час (тести).
 **КП:** replay на записаному corpus дає 0 diff до змін і n diff після зміни фільтра; shadow не впливає на відповідь клієнту.
 
 ## Stage 12 — Hot reload без розриву, graceful, служба

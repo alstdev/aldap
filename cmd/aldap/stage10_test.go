@@ -153,7 +153,7 @@ func TestStage10_Aldapctl(t *testing.T) {
 			if r := run(1, "config", "validate", rendered); !strings.Contains(r.stderr, "masked placeholder") {
 				t.Errorf("masked rendering: %s", r.stderr)
 			}
-			if r := run(1, "record", "start", "virola", "--yes"); !strings.Contains(r.stderr, "HTTP 501") {
+			if r := run(1, "record", "start", "virola", "--yes"); !strings.Contains(r.stderr, "no_record_file") {
 				t.Errorf("record: %s", r.stderr)
 			}
 			out := filepath.Join(t.TempDir(), "aldap-bundle.tgz")

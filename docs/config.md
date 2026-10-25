@@ -333,8 +333,12 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `profile.<name>.ratelimit.lockdown.allow_cidrs` | []string | `inherit` | See ratelimit.lockdown.allow_cidrs. |
 | `profile.<name>.ratelimit.lockdown.allow_accounts` | []string | `inherit` | See ratelimit.lockdown.allow_accounts. |
 | `profile.<name>.shadow` | table |  | Shadow rules evaluated in parallel; differences are reported as shadow_diff. |
-| `profile.<name>.shadow.filter` | string |  | Shadow filter evaluated alongside the main one. |
-| `profile.<name>.shadow.bases` | []string | `[]` | Shadow bases evaluated alongside the main ones. |
+| `profile.<name>.shadow.filter` | string |  | Shadow filter evaluated alongside the main one (replaces filter for the shadow search). |
+| `profile.<name>.shadow.bases` | []string | `[]` | Shadow bases evaluated alongside the main ones (replace bases for the shadow search). |
+| `profile.<name>.shadow.max_parallel` | int | `4` | Shadow searches running at once; a search arriving when all are busy is not shadowed. |
+| `profile.<name>.shadow.timeout` | duration | `10s` | Upper bound of one shadow search; a shadow search that times out is not reported. |
 | `profile.<name>.record` | table |  | Request recording for replay. |
-| `profile.<name>.record.enabled` | bool | `false` | Record client requests (never passwords) as JSONL. |
-| `profile.<name>.record.file` | string |  | Output file. |
+| `profile.<name>.record.enabled` | bool | `false` | Record client searches from the start (never passwords, bind data or paging cookies) as JSON lines in the replay format; aldapctl record start/stop switches it at run time. |
+| `profile.<name>.record.file` | string |  | Output file (mode 0600); required to record. |
+| `profile.<name>.record.max_size_mb` | int | `100` | Rotate the file when it would exceed this size. |
+| `profile.<name>.record.max_files` | int | `5` | Rotated files kept (file.1 … file.N); the oldest is removed. |

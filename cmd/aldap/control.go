@@ -179,14 +179,29 @@ func (c *controller) ValidateConfig(_ context.Context, body []byte) error {
 	return c.validate(body)
 }
 
-// Record implements api.Backend for POST /v1/profiles/{name}/record. The
-// recorder (internal/record) does not exist yet: a known profile answers
-// 501 (docs/DECISIONS.md «aldapctl record»).
-func (c *controller) Record(_ context.Context, profile string, _ bool) error {
-	if _, ok := c.daemon().cfg.Profiles[profile]; !ok {
+// Record implements api.Backend for POST /v1/profiles/{name}/record:
+// starts or stops the recorder of the profile ([profile.<name>.record]).
+// The state lasts until the process exits or the record section changes;
+// it is not written to the configuration.
+func (c *controller) Record(_ context.Context, profile string, on bool) error {
+	d := c.daemon()
+	if _, ok := d.cfg.Profiles[profile]; !ok {
 		return fmt.Errorf("profile %q: %w", profile, api.ErrNotFound)
 	}
-	return fmt.Errorf("request recording: %w", api.ErrNotImplemented)
+	for _, sp := range d.profiles {
+		if sp.name != profile || sp.rec == nil {
+			continue
+		}
+		if !on {
+			sp.rec.rec.Stop()
+			return nil
+		}
+		if err := sp.rec.rec.Start(); err != nil {
+			return fmt.Errorf("profile %q: %w", profile, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("profile %q: %w", profile, api.ErrNoRecordFile)
 }
 
 // ApplyConfig implements api.Backend (SPEC §7 PUT /v1/config): validate in

@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -495,10 +496,21 @@ func (v Validator) validateProfile(path, name string, p *Profile, c *Config, rep
 	}
 	v.validateProfileLimits(path, &p.Limits, rep)
 	p.Ratelimit.validate(path+".ratelimit", rep)
-	v.checkFilter(rep, path+".shadow.filter", p.Shadow.Filter)
-	v.checkDNList(rep, path+".shadow.bases", p.Shadow.Bases)
+	v.validateProfileShadow(path, p, rep)
 	if p.Record.Enabled && p.Record.File == "" {
 		rep.errorf(path+".record.file", "required when record.enabled = true")
+	}
+	atLeast(rep, path+".record.max_size_mb", p.Record.MaxSizeMB, 1)
+	atLeast(rep, path+".record.max_files", p.Record.MaxFiles, 1)
+}
+
+func (v Validator) validateProfileShadow(path string, p *Profile, rep *Report) {
+	v.checkFilter(rep, path+".shadow.filter", p.Shadow.Filter)
+	v.checkDNList(rep, path+".shadow.bases", p.Shadow.Bases)
+	atLeast(rep, path+".shadow.max_parallel", p.Shadow.MaxParallel, 1)
+	positive(rep, path+".shadow.timeout", p.Shadow.Timeout)
+	if p.Shadow.Enabled() && p.Mode == "honeypot" {
+		rep.warnf(path+".shadow", "ignored for mode = honeypot (no directory to search)")
 	}
 }
 
@@ -725,9 +737,20 @@ func (v Validator) validateProfilesCross(c *Config, rep *Report) {
 	}
 	bases := map[string]string{}
 	ports := map[int][]listener{}
+	files := map[string]string{}
+	if c.Events.File.Enabled && c.Events.File.Path != "" {
+		files[filepath.Clean(c.Events.File.Path)] = "events.file.path"
+	}
 	for _, name := range sortedKeys(c.Profiles) {
 		p := c.Profiles[name]
 		path := "profile." + name
+		if f := p.Record.File; f != "" {
+			if other, dup := files[filepath.Clean(f)]; dup {
+				rep.errorf(path+".record.file", "%q is already written by %s", f, other)
+			} else {
+				files[filepath.Clean(f)] = path + ".record.file"
+			}
+		}
 		vb := strings.ToLower(strings.ReplaceAll(p.VirtualBase, " ", ""))
 		if vb != "" {
 			if other, dup := bases[vb]; dup {

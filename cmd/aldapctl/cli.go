@@ -659,10 +659,10 @@ func cmdLearn(s *session, args []string) error {
 	return nil
 }
 
-func cmdRecordStart(s *session, args []string) error { return record(s, args[0], true) }
-func cmdRecordStop(s *session, args []string) error  { return record(s, args[0], false) }
+func cmdRecordStart(s *session, args []string) error { return setRecording(s, args[0], true) }
+func cmdRecordStop(s *session, args []string) error  { return setRecording(s, args[0], false) }
 
-func record(s *session, profile string, on bool) error {
+func setRecording(s *session, profile string, on bool) error {
 	c, err := s.client()
 	if err != nil {
 		return err

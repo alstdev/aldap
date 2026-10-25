@@ -31,6 +31,8 @@ func TestSchema_EveryKindValidates(t *testing.T) {
 		events.StaleServed:       {"age_s": 75, "entries": 3},
 		events.ReplicaSynced:     {"age_s": 0, "entries": 19},
 		events.ReplicaSyncFailed: {"age_s": 300, "entries": 19},
+		events.ShadowDiff: {"base": "ou=users,dc=x", "scope": "sub", "filter_norm": "(uid=a)", "added": []string{"cn=b,ou=users,dc=x"}, "removed": []string{},
+			"added_count": 1, "removed_count": 0, "results": 1, "shadow_results": 2, "result_code": 0, "shadow_result_code": 0},
 	}
 	for _, kind := range kinds {
 		e := events.Event{Event: kind, Level: events.LevelMedium, Profile: "p", ConnID: "c-1", ClientIP: "10.0.0.1", ClientPort: 1234,
@@ -66,6 +68,8 @@ func TestSchema_RejectsInvalid(t *testing.T) {
 		"search scope":        `{"schema":"aldap.event.v1","ts":"2026-10-19T10:00:00.000Z","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","seq":1,"event":"search","level":"low","host":"h","data":{"base":"","scope":"all","filter_norm":"","results":0}}`,
 		"attrs items":         `{"schema":"aldap.event.v1","ts":"2026-10-19T10:00:00.000Z","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","seq":1,"event":"search","level":"low","host":"h","data":{"base":"","scope":"sub","filter_norm":"","results":0,"attrs_requested":[1]}}`,
 		"tls type":            `{"schema":"aldap.event.v1","ts":"2026-10-19T10:00:00.000Z","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","seq":1,"event":"startup","level":"low","host":"h","tls":"yes","data":{}}`,
+		"shadow_diff data":    `{"schema":"aldap.event.v1","ts":"2026-10-19T10:00:00.000Z","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","seq":1,"event":"shadow_diff","level":"low","host":"h","data":{"base":"","scope":"sub","filter_norm":"","added":[],"removed":[]}}`,
+		"shadow_diff samples": `{"schema":"aldap.event.v1","ts":"2026-10-19T10:00:00.000Z","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","seq":1,"event":"shadow_diff","level":"low","host":"h","data":{"base":"","scope":"sub","filter_norm":"","added":["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21"],"removed":[],"added_count":21,"removed_count":0}}`,
 		"data not object":     `{"schema":"aldap.event.v1","ts":"2026-10-19T10:00:00.000Z","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","seq":1,"event":"startup","level":"low","host":"h","data":[]}`,
 	}
 	for name, raw := range cases {

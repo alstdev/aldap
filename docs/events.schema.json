@@ -134,6 +134,30 @@
       }
     },
     {
+      "if": { "properties": { "event": { "const": "shadow_diff" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["base", "scope", "filter_norm", "added", "removed", "added_count", "removed_count"],
+            "properties": {
+              "base": { "type": "string" },
+              "scope": { "enum": ["base", "one", "sub"] },
+              "filter_norm": { "type": "string" },
+              "added": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+              "removed": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+              "added_count": { "type": "integer", "minimum": 0 },
+              "removed_count": { "type": "integer", "minimum": 0 },
+              "results": { "type": "integer", "minimum": 0 },
+              "shadow_results": { "type": "integer", "minimum": 0 },
+              "result_code": { "type": "integer" },
+              "shadow_result_code": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    {
       "if": { "properties": { "event": { "const": "stale_served" } } },
       "then": {
         "properties": {

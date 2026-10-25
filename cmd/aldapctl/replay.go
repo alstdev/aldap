@@ -1,30 +1,13 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"sort"
-	"strings"
-)
 
-// replayRecord is one recorded search (JSON lines, docs/aldapctl.md
-// «replay»): what the client asked and what it got. Fields other than
-// filter are optional; without dns only the count is compared, without
-// entries/dns only the result code.
-type replayRecord struct {
-	Profile    string   `json:"profile,omitempty"`
-	Base       string   `json:"base"`
-	Scope      string   `json:"scope"`
-	Filter     string   `json:"filter"`
-	Attrs      []string `json:"attrs"`
-	ResultCode *int     `json:"result_code"`
-	Entries    *int     `json:"entries"`
-	DNList     []string `json:"dns"`
-}
+	"github.com/alstdev/aldap/internal/record"
+)
 
 // replayDiff is one search whose answer differs from the recording.
 type replayDiff struct {
@@ -45,71 +28,13 @@ type replayReport struct {
 	Diffs   []replayDiff `json:"diffs"`
 }
 
-// maxReplayLine bounds one recorded line.
-const maxReplayLine = 1 << 20
-
-func readReplay(r io.Reader) ([]replayRecord, []int, error) {
-	var recs []replayRecord
-	var lines []int
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 64<<10), maxReplayLine)
-	n := 0
-	for sc.Scan() {
-		n++
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		var rec replayRecord
-		dec := json.NewDecoder(strings.NewReader(line))
-		if err := dec.Decode(&rec); err != nil {
-			return nil, nil, fmt.Errorf("line %d: %w", n, err)
-		}
-		if rec.Filter == "" {
-			return nil, nil, fmt.Errorf("line %d: filter is required", n)
-		}
-		recs = append(recs, rec)
-		lines = append(lines, n)
-	}
-	if err := sc.Err(); err != nil {
-		return nil, nil, err
-	}
-	return recs, lines, nil
-}
-
-func dnKey(dn string) string { return strings.ToLower(strings.TrimSpace(dn)) }
-
-// diffDNList returns the recorded DNs missing from got and the extra ones.
-func diffDNList(want, got []string) (missing, extra []string) {
-	w, g := map[string]string{}, map[string]string{}
-	for _, d := range want {
-		w[dnKey(d)] = d
-	}
-	for _, d := range got {
-		g[dnKey(d)] = d
-	}
-	for k, d := range w {
-		if _, ok := g[k]; !ok {
-			missing = append(missing, d)
-		}
-	}
-	for k, d := range g {
-		if _, ok := w[k]; !ok {
-			extra = append(extra, d)
-		}
-	}
-	sort.Strings(missing)
-	sort.Strings(extra)
-	return missing, extra
-}
-
 var errReplayDiffers = errors.New("replay: answers differ from the recording")
 
 // replayOne runs one recorded search; an API refusal of the search is a
 // difference, an unknown profile or a lost connection ends the replay.
-func replayOne(s *session, c *client, rec replayRecord) (replayDiff, bool, error) {
+func replayOne(s *session, c *client, rec record.Search) (replayDiff, bool, error) {
 	d := replayDiff{Filter: rec.Filter, Base: rec.Base}
-	res, err := c.Test(s.ctx(), s.o.profile, testRequest{Base: rec.Base, Scope: rec.Scope, Filter: rec.Filter, Attrs: rec.Attrs})
+	res, err := c.Test(s.ctx(), s.o.profile, testRequest{Base: rec.Base, Scope: rec.Scope, Filter: rec.Filter, Attrs: rec.Attrs, SizeLimit: rec.SizeLimit})
 	if err != nil {
 		var ae *apiError
 		if !errors.As(err, &ae) || ae.Status == 404 {
@@ -118,26 +43,12 @@ func replayOne(s *session, c *client, rec replayRecord) (replayDiff, bool, error
 		d.Error = err.Error()
 		return d, true, nil
 	}
-	differs := false
-	if rec.ResultCode != nil && *rec.ResultCode != res.ResultCode {
-		d.ResultCode, differs = []int{*rec.ResultCode, res.ResultCode}, true
-	}
 	got := make([]string, 0, len(res.Entries))
 	for _, e := range res.Entries {
 		got = append(got, e.DN)
 	}
-	want := -1
-	switch {
-	case rec.DNList != nil:
-		want = len(rec.DNList)
-		d.Missing, d.Extra = diffDNList(rec.DNList, got)
-		differs = differs || len(d.Missing) > 0 || len(d.Extra) > 0
-	case rec.Entries != nil:
-		want = *rec.Entries
-	}
-	if want >= 0 && want != len(got) {
-		d.Entries, differs = []int{want, len(got)}, true
-	}
+	diff, differs := record.Compare(rec, res.ResultCode, got)
+	d.ResultCode, d.Entries, d.Missing, d.Extra = diff.ResultCode, diff.Entries, diff.Missing, diff.Extra
 	return d, differs, nil
 }
 
@@ -149,7 +60,7 @@ func cmdReplay(s *session, args []string) error {
 	if err != nil {
 		return err
 	}
-	recs, lines, err := readReplay(f)
+	recs, lines, err := record.Read(f)
 	_ = f.Close() //nolint:errcheck // read only
 	if err != nil {
 		return fmt.Errorf("replay %s: %w", args[0], err)

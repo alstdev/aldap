@@ -44,7 +44,7 @@ usage error.
 | `test <profile> --filter F [--base DN] [--scope base\|one\|sub] [--attrs a,b] [--size-limit N]` | `POST /v1/profiles/{name}/test` |
 | `sync <profile>` * | `POST /v1/profiles/{name}/sync` |
 | `baseline learn <profile> [--for 24h]` * | `POST /v1/baseline/{profile}/learn` |
-| `record start\|stop <profile>` * | `POST /v1/profiles/{name}/record` (`501` until Stage 11) |
+| `record start\|stop <profile>` * | `POST /v1/profiles/{name}/record` (`409 no_record_file` without `record.file`; docs/record.md) |
 | `replay <file> --profile P [--json]` | `POST /v1/profiles/{name}/test` per recorded search |
 | `bundle [--out aldap-bundle.tgz] [--force] [--events N]` | read-only endpoints, see below |
 | `tui` (or no command) | all of the above |
@@ -104,17 +104,19 @@ fails the bundle.
 `aldapctl replay <file> --profile P` sends every recorded search to `POST /v1/profiles/P/test` and
 compares it with the recording: the LDAP result code, the number of entries and the DN set
 (case-insensitive). The report lists the differences (missing / extra DNs, at most five each) and the
-command exits with 1 when there is any. The file is JSON lines (`#` comments and blank lines are
-skipped):
+command exits with 1 when there is any. The file is what the recorder writes
+(`aldapctl record start|stop`, `[profile.<name>.record]`, docs/record.md): JSON lines, `#` comments
+and blank lines skipped, one line at most 1 MiB:
 
 ```json
-{"profile":"virola","base":"ou=users,dc=aldap","scope":"sub","filter":"(uid=jdoe)","attrs":["mail"],"result_code":0,"entries":1,"dns":["uid=jdoe,ou=users,dc=aldap"]}
+{"ts":"2026-10-25T09:00:00.123Z","profile":"virola","base":"ou=users,dc=aldap","scope":"sub","filter":"(uid=jdoe)","attrs":["mail"],"size_limit":10,"result_code":0,"entries":1,"dns":["uid=jdoe,ou=users,dc=aldap"]}
 ```
 
-Only `filter` is required; without `dns` only the count is compared, without `entries`/`dns` only the
-result code. The recorder that writes this format comes with Stage 11 (docs/DECISIONS.md «replay
-format», OPEN); `replay` searches go to the upstream like client searches, so replaying a large file
-loads the directory.
+Only `filter` is required; `ts` is informational, `size_limit` (client size limit, omitted when 0) is
+sent with the test request; without `dns` only the count is compared, without `entries`/`dns` only the
+result code. Reader and comparison are `internal/record` (`Read`, `Compare`), shared with the recorder,
+so both sides keep one format. `replay` searches go to the upstream like client searches, so replaying a
+large file loads the directory. Rotated files (`virola.jsonl.1` …) are replayed one by one.
 
 ## TUI
 

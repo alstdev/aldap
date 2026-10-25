@@ -153,6 +153,8 @@ func DefaultProfile() *Profile {
 			MaxResultSize: 5000, MaxFilterDepth: 20, MaxFilterLen: 4096, MaxRequestBytes: 1 << 20,
 			MaxConnsPerIP: 32, IdleTimeout: d(10 * time.Minute), UpstreamParallel: 4,
 		},
+		Shadow: Shadow{MaxParallel: 4, Timeout: d(10 * time.Second)},
+		Record: Record{MaxSizeMB: 100, MaxFiles: 5},
 	}
 }
 

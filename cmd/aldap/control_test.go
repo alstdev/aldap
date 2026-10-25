@@ -350,7 +350,7 @@ func TestController_ValidateConfigAndRecord(t *testing.T) {
 	if err := ctl.Record(ctx, "nope", true); !errors.Is(err, api.ErrNotFound) {
 		t.Errorf("record unknown: %v", err)
 	}
-	if err := ctl.Record(ctx, "virola", true); !errors.Is(err, api.ErrNotImplemented) {
+	if err := ctl.Record(ctx, "virola", true); !errors.Is(err, api.ErrNoRecordFile) {
 		t.Errorf("record: %v", err)
 	}
 	ctl.path = ""

@@ -78,3 +78,11 @@ wrote (TESTING.md 34).
 
 `aldap_events_total{event}` and `aldap_events_dropped_total{sink}`
 (`internal/metrics`, served by `/metrics` from Stage 7).
+
+## `shadow_diff`
+
+Emitted by the shadow rules of a profile (docs/record.md) when the shadow answer differs from the one
+the client got: `data.base`, `scope`, `filter_norm` (password-like values `***`), `added` / `removed`
+(at most 20 DNs each: only the shadow answer has them / only the client answer has them),
+`added_count`, `removed_count`, `results`, `shadow_results`, `result_code`, `shadow_result_code`;
+`duration_ms` is the shadow search time; the connection fields are those of the client search.
