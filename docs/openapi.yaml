@@ -224,6 +224,8 @@ paths:
         when the reload fails the previous file is restored and the running configuration kept.
         With dry_run=true the body is only validated (no backup, no write, no reload).
         An inline secret equal to the masked placeholder "***" of GET /v1/config is refused (400).
+        409 no_config_file when the configuration comes from the environment only; 409
+        config_read_only when the file cannot be written (read-only mount, docs/podman.md).
       parameters: [{ name: dry_run, in: query, schema: { type: boolean, default: false } }]
       requestBody: { required: true, content: { application/toml: {} } }
       responses:

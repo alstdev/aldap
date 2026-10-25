@@ -762,7 +762,7 @@ func TestAdmin_ConfigReloadSyncTestLearn(t *testing.T) {
 }
 
 func TestBackendError_Mapping(t *testing.T) {
-	for err, want := range map[error]int{ErrNotFound: 404, ErrInvalidConfig: 400, ErrNoConfigFile: 409, ErrNotReplica: 409, ErrNotImplemented: 501, ErrNoRecordFile: 409,
+	for err, want := range map[error]int{ErrNotFound: 404, ErrInvalidConfig: 400, ErrNoConfigFile: 409, ErrConfigReadOnly: 409, ErrNotReplica: 409, ErrNotImplemented: 501, ErrNoRecordFile: 409,
 		context.Canceled: 503, io.ErrUnexpectedEOF: 500} {
 		w := httptest.NewRecorder()
 		backendError(w, err)

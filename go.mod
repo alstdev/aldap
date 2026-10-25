@@ -14,6 +14,7 @@ require (
 	github.com/go-ldap/ldap/v3 v3.4.14
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/jimlambrt/gldap v0.1.14
+	github.com/kardianos/service v1.3.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
 	golang.org/x/crypto v0.57.0

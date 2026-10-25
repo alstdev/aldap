@@ -1,0 +1,81 @@
+# ALDAP — rootless Podman Quadlet unit (docs/podman.md).
+#
+# Install as the user that runs ALDAP:
+#   mkdir -p ~/.config/containers/systemd ~/.config/aldap
+#   cp deploy/podman/aldap.container ~/.config/containers/systemd/
+#   systemctl --user daemon-reload
+#   systemctl --user start aldap.service
+#   loginctl enable-linger "$USER"     # keep running without a login session
+#
+# The image comes from `./build.sh --podman` (docker format, so the image
+# HEALTHCHECK `aldap check --quick` is kept; the static image has no shell
+# for a HealthCmd= string).
+
+[Unit]
+Description=ALDAP LDAP proxy (rootless Podman)
+Documentation=https://github.com/alstdev/aldap/blob/main/docs/podman.md
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=aldap
+Image=localhost/aldap/aldap:latest
+
+# Network: pasta WITHOUT a custom network keeps the real client source IP.
+# Per-IP rate limits, ratelimit.lockdown.allow_cidrs and the IDS depend on it.
+# Do not use Network=<name>.network or podman-compose: the userspace port
+# forwarder (rootlessport) replaces every client address with its own and
+# ALDAP reports insecure_config{what=client_ip_masked}.
+Network=pasta
+
+# Host port -> container port (ALDAP listens on the profile ports inside the
+# container). Host ports below 1024 need net.ipv4.ip_unprivileged_port_start
+# on the host (docs/podman.md).
+PublishPort=6360:636
+# PublishPort=13890:1389
+# API published on the host loopback only. Inside the container [api] listen
+# must accept the forwarded connection (e.g. "0.0.0.0:8636", builtin TLS and
+# tokens are then required); see docs/podman.md.
+# PublishPort=127.0.0.1:8636:8636
+
+# Lets the unprivileged process bind 636 inside the container's own network
+# namespace (the host is not affected).
+Sysctl=net.ipv4.ip_unprivileged_port_start=0
+
+# Hardening
+ReadOnly=true
+DropCapability=all
+NoNewPrivileges=true
+# The host user becomes uid/gid 65532 (the image user) inside the container,
+# so files of the host user (0600 configuration, CA keys) stay readable.
+UserNS=keep-id:uid=65532,gid=65532
+Tmpfs=/run/aldap:rw,size=8m,mode=0700,uid=65532,gid=65532
+
+# Configuration: mount the DIRECTORY, read-only. A single-file bind mount
+# breaks when an editor saves by writing a new file and renaming it (the
+# container keeps the old inode). With :ro the API/TUI can show the
+# configuration but cannot apply changes: edit on the host, then reload.
+Volume=%h/.config/aldap:/etc/aldap:ro,Z
+# State: built-in CA, issued certificates, event files.
+Volume=aldap-state:/var/lib/aldap:U,Z
+
+# Secrets: podman secret create ad_pass ./ad_pass (see docs/podman.md);
+# mounted at /run/secrets/<name>, readable by the ALDAP user only.
+Secret=ad_pass,type=mount,uid=65532,gid=65532,mode=0400
+Secret=virola_bind,type=mount,uid=65532,gid=65532,mode=0400
+# Secret=api_admin,type=mount,uid=65532,gid=65532,mode=0400
+
+Environment=ALDAP_CONFIG=/etc/aldap/aldap.toml
+# SIGTERM starts the graceful drain (SPEC §5.3); give it server.shutdown_timeout
+# (default 30s) plus a margin before podman kills the process.
+StopTimeout=40
+# Optional: Notify=true lets ALDAP report READY=1 itself (sd_notify).
+
+[Service]
+# ExecReload sends SIGHUP to ALDAP inside the container (hot reload, SPEC §3.6).
+ExecReload=/usr/bin/podman kill --signal HUP aldap
+Restart=on-failure
+TimeoutStopSec=45
+
+[Install]
+WantedBy=default.target

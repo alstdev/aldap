@@ -44,6 +44,9 @@ var (
 	ErrNotImplemented = errors.New("not implemented")
 	// ErrNoRecordFile refuses recording for a profile without record.file.
 	ErrNoRecordFile = errors.New("record.file is not set for the profile")
+	// ErrConfigReadOnly refuses PUT /v1/config when the configuration file
+	// cannot be written (read-only mount, e.g. a container volume with :ro).
+	ErrConfigReadOnly = errors.New("the configuration file is read-only")
 	// ErrInsecureListen refuses a non-loopback listener without TLS.
 	ErrInsecureListen = errors.New("TLS is mandatory when the API listens beyond loopback")
 )
@@ -416,6 +419,8 @@ func backendError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_config", err.Error())
 	case errors.Is(err, ErrNoConfigFile):
 		writeError(w, http.StatusConflict, "no_config_file", err.Error())
+	case errors.Is(err, ErrConfigReadOnly):
+		writeError(w, http.StatusConflict, "config_read_only", err.Error())
 	case errors.Is(err, ErrNotReplica):
 		writeError(w, http.StatusConflict, "not_replica", err.Error())
 	case errors.Is(err, ErrNoRecordFile):

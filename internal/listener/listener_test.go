@@ -196,7 +196,7 @@ func (ts *testServer) dial(t *testing.T) *ldap.Conn {
 	t.Helper()
 	var c *ldap.Conn
 	var err error
-	if ts.ldaps {
+	if ts.current().ldaps {
 		c, err = ldap.DialURL("ldaps://"+ts.addr, ldap.DialWithTLSConfig(ts.clientTLS()))
 	} else {
 		c, err = ldap.DialURL("ldap://" + ts.addr)
@@ -223,7 +223,7 @@ func TestNew_Errors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.OffersStartTLS() || s.RequiresTLS() || s.cfg.MaxRequestBytes != defaultMaxRequestBytes {
+	if s.OffersStartTLS() || s.RequiresTLS() || s.current().cfg.MaxRequestBytes != defaultMaxRequestBytes {
 		t.Error("ldap defaults")
 	}
 	s.Close()
@@ -695,10 +695,23 @@ func TestLimits(t *testing.T) {
 	}
 	u.Release()
 	ui := NewIPLimiter(0)
-	if !ui.Acquire("x") || ui.Count("x") != 0 {
-		t.Error("unlimited ip limiter")
+	if !ui.Acquire("x") || ui.Count("x") != 1 {
+		t.Error("unlimited ip limiter still counts")
+	}
+	// A limit set by a reload applies to the connections already open.
+	ui.SetLimit(1)
+	if ui.Acquire("x") || ui.Limit() != 1 {
+		t.Error("SetLimit on an IP limiter")
 	}
 	ui.Release("x")
+	if ui.Count("x") != 0 {
+		t.Error("release after SetLimit")
+	}
+	u.SetLimit(1)
+	if !u.Acquire() || u.Acquire() || u.Count() != 1 {
+		t.Error("SetLimit on the global limiter")
+	}
+	u.Release()
 	li := NewIPLimiter(1)
 	li.Release("never") // no-op
 	if li.Count("never") != 0 {

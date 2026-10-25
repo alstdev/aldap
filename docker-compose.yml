@@ -21,6 +21,9 @@ services:
       - "1389:1389"    # profile.honeypot
       - "127.0.0.1:8636:8636"  # API, loopback only
     volumes:
+      # A single-file bind mount keeps the old inode when an editor saves by
+      # rename; mounting a directory (e.g. ./config:/etc/aldap:ro) always shows
+      # the current file. With :ro the API/TUI can view but not apply config.
       - ./aldap.toml:/etc/aldap/aldap.toml:ro
       - ./tls/ad-ca.pem:/etc/aldap/tls/ad-ca.pem:ro
       - aldap-state:/var/lib/aldap

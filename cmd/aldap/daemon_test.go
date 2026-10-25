@@ -451,7 +451,7 @@ func TestEffectiveTLS_Overrides(t *testing.T) {
 	}
 	for lvl, want := range map[string]slog.Level{"debug": slog.LevelDebug, "info": slog.LevelInfo, "warn": slog.LevelWarn, "error": slog.LevelError} {
 		var buf bytes.Buffer
-		log := newLogger(config.Server{LogLevel: lvl, LogFormat: "json"}, &buf)
+		log := newLogger(config.Server{LogLevel: lvl, LogFormat: "json"}, &buf, nil)
 		log.Log(context.Background(), want-1, "hidden")
 		log.Log(context.Background(), want, "shown")
 		if strings.Contains(buf.String(), "hidden") || !strings.Contains(buf.String(), `"msg":"shown"`) {
@@ -459,7 +459,7 @@ func TestEffectiveTLS_Overrides(t *testing.T) {
 		}
 	}
 	var buf bytes.Buffer
-	newLogger(config.Server{LogLevel: "info", LogFormat: "text"}, &buf).Info("hello")
+	newLogger(config.Server{LogLevel: "info", LogFormat: "text"}, &buf, nil).Info("hello")
 	if !strings.Contains(buf.String(), "msg=hello") {
 		t.Errorf("text format: %s", buf.String())
 	}

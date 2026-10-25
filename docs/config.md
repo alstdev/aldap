@@ -89,6 +89,13 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `ids.honeytoken.lock_duration` | duration | `24h0m0s` | Lock duration applied to a source that touches a honeytoken. |
 | `ids.fingerprint` | table |  | TLS and LDAP client fingerprint detector. |
 | `ids.fingerprint.enabled` | bool | `false` | Enable the detector. |
+| `ids.client_ip_masked` | table |  | Detector of a proxy or container network that replaces client addresses with its own (insecure_config what=client_ip_masked). |
+| `ids.client_ip_masked.enabled` | bool | `true` | Enable the detector. |
+| `ids.client_ip_masked.window` | duration | `10m0s` | Observation window. |
+| `ids.client_ip_masked.min_requests` | int | `50` | Binds and searches within window needed before the share is judged. |
+| `ids.client_ip_masked.min_share_percent` | int | `90` | Share (percent) of the binds and searches from one private address that triggers the detector. |
+| `ids.client_ip_masked.min_accounts` | int | `3` | Distinct accounts seen from that address that trigger the detector. |
+| `ids.client_ip_masked.ignore_cidrs` | []string | `[]` | Sources never reported, e.g. an application server that binds on behalf of its users. |
 | `events` | table |  | Audit event stream and sinks. |
 | `events.schema` | string | `"aldap.event.v1"` | Event schema identifier, informational (aldap.event.v1). |
 | `events.buffer_size` | int | `100000` | In-memory ring buffer size. |

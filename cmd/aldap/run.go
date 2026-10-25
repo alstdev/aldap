@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -66,9 +67,24 @@ func serve(ctx context.Context, path string, required bool, o daemonOptions, sig
 		return 1
 	}
 	fmt.Fprintf(stdout, "aldap %s listening: %s\n", version, describeListen(d))
+	notifyManager(d.log, "READY=1\nSTATUS=serving "+describeListen(d))
+	if o.Ready != nil {
+		o.Ready()
+	}
 	stop := func() {
+		notifyManager(ctl.cur.Load().log, "STOPPING=1")
 		rt.stop()
 		ctl.cur.Load().stop()
+	}
+	doReload := func() error {
+		notifyManager(ctl.cur.Load().log, "RELOADING=1")
+		next, err := reload(ctx, ctl.cur.Load(), path, required, o)
+		ctl.cur.Store(next)
+		if err == nil {
+			rt.reconfigure(next)
+		}
+		notifyManager(next.log, "READY=1\nSTATUS=serving "+describeListen(next))
+		return err
 	}
 	for {
 		select {
@@ -76,20 +92,11 @@ func serve(ctx context.Context, path string, required bool, o daemonOptions, sig
 			stop()
 			return 0
 		case req := <-ctl.reqs:
-			next, err := reload(ctx, ctl.cur.Load(), path, required, o)
-			ctl.cur.Store(next)
-			if err == nil {
-				rt.reconfigure(next)
-			}
-			req.done <- err
+			req.done <- doReload()
 		case sig := <-sigs:
 			switch sig {
 			case syscall.SIGHUP:
-				next, err := reload(ctx, ctl.cur.Load(), path, required, o)
-				ctl.cur.Store(next)
-				if err == nil {
-					rt.reconfigure(next)
-				}
+				_ = doReload() //nolint:errcheck // reload logs and emits config_reload itself
 			default:
 				ctl.cur.Load().log.Info("signal received, shutting down", "signal", sig.String())
 				stop()
@@ -100,11 +107,13 @@ func serve(ctx context.Context, path string, required bool, o daemonOptions, sig
 }
 
 // reload builds the new configuration; on failure the old daemon keeps
-// running and config_reload{ok=false} is emitted. On success the old
-// listeners are drained and the new ones started (full restart of the
-// listeners until Stage 12). It returns the daemon now serving and the
-// error of a failed reload (api.ErrInvalidConfig when the new
-// configuration does not load or validate).
+// running and config_reload{ok=false} is emitted. On success the new
+// generation takes the listeners over without closing the addresses that
+// stay (SPEC §3.6): requests in flight finish under the old rules, every
+// later request uses the new ones; added addresses are opened, removed
+// ones drained. It returns the daemon now serving and the error of a
+// failed reload (api.ErrInvalidConfig when the new configuration does not
+// load or validate).
 func reload(ctx context.Context, old *daemon, path string, required bool, o daemonOptions) (*daemon, error) {
 	old.log.Info("reload requested")
 	next, err := loadDaemon(path, required, o)
@@ -113,25 +122,27 @@ func reload(ctx context.Context, old *daemon, path string, required bool, o daem
 		old.events.Emit(events.Event{Event: events.ConfigReload, Level: events.LevelHigh, Data: map[string]any{"ok": false, "errors": []string{err.Error()}}})
 		return old, fmt.Errorf("%w: %v", api.ErrInvalidConfig, err) //nolint:errorlint // one sentinel, the cause as text
 	}
-	old.stop()
-	if err := next.start(ctx); err != nil {
-		// The old listeners are gone; bring the previous configuration back
-		// from memory (the file may already hold the new one).
-		next.log.Error("new configuration failed to start, restarting the previous one", "err", err)
-		next.stop()
-		prev, perr := buildDaemon(old.cfg, o)
-		if perr == nil {
-			perr = prev.start(ctx)
-		}
-		if perr != nil {
-			old.log.Error("previous configuration could not be restarted either", "err", perr)
-			old.events.Emit(events.Event{Event: events.ConfigReload, Level: events.LevelHigh, Data: map[string]any{"ok": false, "errors": []string{err.Error(), perr.Error()}}})
-			return old, fmt.Errorf("start: %w; previous configuration: %v", err, perr) //nolint:errorlint // the start error decides the status
-		}
-		prev.events.Emit(events.Event{Event: events.ConfigReload, Level: events.LevelHigh, Data: map[string]any{"ok": false, "errors": []string{err.Error()}}})
-		return prev, fmt.Errorf("start: %w", err)
+	old.mu.Lock()
+	pool := old.pool
+	old.mu.Unlock()
+	if pool == nil {
+		pool = newSocketPool()
+	}
+	if err := next.takeOver(ctx, pool, old); err != nil {
+		// Nothing changed: the old generation keeps every listener.
+		next.log.Error("new configuration failed to start, keeping the running one", "err", err)
+		next.release()
+		old.events.Emit(events.Event{Event: events.ConfigReload, Level: events.LevelHigh, Data: map[string]any{"ok": false, "errors": []string{err.Error()}}})
+		return old, fmt.Errorf("start: %w", err)
 	}
 	next.events.Emit(events.Event{Event: events.ConfigReload, Level: events.LevelLow, Data: map[string]any{"ok": true, "errors": []string{}}})
-	next.log.Info("configuration reloaded")
+	next.log.Info("configuration reloaded", "listen", describeListen(next))
 	return next, nil
+}
+
+// notifyManager reports the daemon state to systemd; a failure is only logged.
+func notifyManager(log *slog.Logger, state string) {
+	if err := sdNotify(state); err != nil {
+		log.Warn("service manager notification failed", "err", err)
+	}
 }

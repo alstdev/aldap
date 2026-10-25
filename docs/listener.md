@@ -56,8 +56,9 @@ control codecs; `gldap` stays the server of `internal/testdir`
      Compare → `compareFalse` + `op_denied{op=compare}`; other extended
      operations → `unwillingToPerform` + `op_denied{op=extended, oid}`.
    - Unbind closes; unknown protocol ops → Notice of Disconnection.
-6. Shutdown: listeners close, connections drain until `server.shutdown_timeout`,
-   the rest receive a Notice of Disconnection (`unavailable`) and are closed.
+6. Shutdown: listeners close, every connection finishes its current request
+   and then receives a Notice of Disconnection (`unavailable`); connections
+   still busy at `server.shutdown_timeout` are cut (Stage 12, `docs/service.md`).
 
 Transports: `ldap` (plain only), `ldaps`, `starttls` (StartTLS offered and
 required for every operation but the root DSE), `ldap+starttls` (StartTLS
@@ -145,8 +146,10 @@ before serving (one failure aborts the start), starts health loops and
 hourly certificate checks, emits `startup`. `SIGINT`/`SIGTERM`: graceful
 stop within `shutdown_timeout`, `shutdown` event. `SIGHUP`: the new
 configuration is loaded and validated; on failure the running one stays and
-`config_reload{ok=false}` is emitted; on success the old listeners are
-drained and the new ones started (`config_reload{ok=true}`). Profiles with
+`config_reload{ok=false}` is emitted; on success the new configuration
+takes the listeners over without closing unchanged addresses — requests in
+flight finish under the old rules (Stage 12 hot reload, `docs/service.md`;
+`config_reload{ok=true}`). Profiles with
 `mode = honeypot` run without an upstream and `mode = mock` over
 `mock.file` (`docs/vdir.md`).
 
