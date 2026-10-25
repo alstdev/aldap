@@ -246,13 +246,18 @@ paths:
     post:
       x-scope: admin
       parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
-      description: Starts or stops request recording of the profile (record/replay, Stage 11); 501 until the recorder exists.
+      description: |
+        Starts or stops recording the client searches of the profile to record.file (JSON lines in the
+        format of aldapctl replay, mode 0600, rotated by record.max_size_mb / record.max_files). The
+        state lasts until the process exits or [profile.<name>.record] changes; record.enabled is the
+        state at start. 409 no_record_file when record.file is not set.
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [state], properties: { state: { type: string, enum: ["on", "off"] } } } } } }
       responses:
         "200": { description: recording state, content: { application/json: { schema: { type: object, properties: { record: { type: string, enum: ["on", "off"] } } } } } }
         "400": { $ref: "#/components/responses/Err" }
         "404": { $ref: "#/components/responses/Err" }
-        "501": { $ref: "#/components/responses/Err" }
+        "409": { $ref: "#/components/responses/Err" }
+        "500": { $ref: "#/components/responses/Err" }
   /v1/profiles/{name}/test:
     post:
       x-scope: admin

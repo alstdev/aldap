@@ -211,12 +211,17 @@ upstream_parallel = 4
 # [profile.virola.ratelimit.account]   # per-profile override
 # max_failures = 2
 
-# [profile.virola.shadow]
-# filter = "(&(objectCategory=person)(department=Sales))"
+# [profile.virola.shadow]          # evaluated in the background, reported as shadow_diff
+# filter       = "(&(objectCategory=person)(department=Sales))"
+# bases        = ["OU=Office,DC=corp,DC=local"]
+# max_parallel = 4                   # busy -> the search is not shadowed
+# timeout      = "10s"               # timed out -> not reported
 
-# [profile.virola.record]
-# enabled = false
-# file    = "/var/lib/aldap/record/virola.jsonl"
+# [profile.virola.record]           # client searches in the aldapctl replay format
+# enabled     = false                # state at start; aldapctl record start|stop at run time
+# file        = "/var/lib/aldap/record/virola.jsonl"   # mode 0600
+# max_size_mb = 100                  # then virola.jsonl.1 ... .<max_files>
+# max_files   = 5
 
 [profile.honeypot]
 listen       = [":1389"]
@@ -310,8 +315,13 @@ url           = "https://itsm.corp.local/api/incidents"
 method        = "POST"
 body_template = '{"title":"ALDAP {{.Event}} {{.Profile}}","severity":"{{.Level}}","source_ip":"{{.ClientIP}}","details":{{.DataJSON}}}'
 hmac_secret_file = "/run/secrets/itsm_hmac"
+# Credentials go to headers_file, a TOML table (mode 0600), e.g.
+#   Authorization = "Bearer <token>"
+# Values of inline `headers` render "***" in GET /v1/config and bundles;
+# an inline Authorization / Cookie / X-API-Key is warned by `aldap check`.
+headers_file  = "/run/secrets/itsm_headers.toml"
 [notify.channel.headers]
-Authorization = "Bearer replace-me-via-secret"   # prefer headers_file
+X-Source = "aldap"
 
 # ------------------------------------------------------------------ management API
 [api]

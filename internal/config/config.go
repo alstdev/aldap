@@ -397,14 +397,21 @@ type LockdownPatch struct {
 
 // Shadow holds shadow rules ([profile.<name>.shadow]).
 type Shadow struct {
-	Filter string   `toml:"filter" doc:"Shadow filter evaluated alongside the main one."`
-	Bases  []string `toml:"bases" doc:"Shadow bases evaluated alongside the main ones."`
+	Filter      string   `toml:"filter" doc:"Shadow filter evaluated alongside the main one (replaces filter for the shadow search)."`
+	Bases       []string `toml:"bases" doc:"Shadow bases evaluated alongside the main ones (replace bases for the shadow search)."`
+	MaxParallel int      `toml:"max_parallel" doc:"Shadow searches running at once; a search arriving when all are busy is not shadowed."`
+	Timeout     Duration `toml:"timeout" doc:"Upper bound of one shadow search; a shadow search that times out is not reported."`
 }
+
+// Enabled reports whether shadow rules are configured.
+func (s Shadow) Enabled() bool { return s.Filter != "" || len(s.Bases) > 0 }
 
 // Record holds request recording settings ([profile.<name>.record]).
 type Record struct {
-	Enabled bool   `toml:"enabled" doc:"Record client requests (never passwords) as JSONL."`
-	File    string `toml:"file" doc:"Output file."`
+	Enabled   bool   `toml:"enabled" doc:"Record client searches from the start (never passwords, bind data or paging cookies) as JSON lines in the replay format; aldapctl record start/stop switches it at run time."`
+	File      string `toml:"file" doc:"Output file (mode 0600); required to record."`
+	MaxSizeMB int    `toml:"max_size_mb" doc:"Rotate the file when it would exceed this size."`
+	MaxFiles  int    `toml:"max_files" doc:"Rotated files kept (file.1 … file.N); the oldest is removed."`
 }
 
 // Events holds the event stream settings ([events]).
@@ -446,20 +453,21 @@ type SyslogSink struct {
 
 // Webhook holds one webhook sink ([[events.webhook]]).
 type Webhook struct {
-	Name           string            `toml:"name" doc:"Unique sink name."`
-	URL            string            `toml:"url" doc:"Destination URL."`
-	Events         []string          `toml:"events" doc:"Event types delivered; empty delivers all."`
-	BatchSize      int               `toml:"batch_size" doc:"Events per request."`
-	BatchInterval  Duration          `toml:"batch_interval" doc:"Maximum wait before a partial batch is sent."`
-	Timeout        Duration          `toml:"timeout" doc:"Request timeout."`
-	Retry          Retry             `toml:"retry" doc:"Retry policy."`
-	HMACSecret     secret.Inline     `toml:"hmac_secret" doc:"HMAC key for X-ALDAP-Signature, inline (warned)."`
-	HMACSecretFile string            `toml:"hmac_secret_file" doc:"File holding the HMAC key."`
-	HMACSecretEnv  string            `toml:"hmac_secret_env" doc:"Environment variable holding the HMAC key."`
-	Headers        map[string]string `toml:"headers" doc:"Extra request headers."`
-	TLSCAFile      string            `toml:"tls_ca_file" doc:"CA bundle used to verify the destination."`
-	QueueSize      int               `toml:"queue_size" doc:"Pending events kept when the destination is slow."`
-	OnOverflow     string            `toml:"on_overflow" doc:"drop_oldest or block when the queue is full."`
+	Name           string        `toml:"name" doc:"Unique sink name."`
+	URL            string        `toml:"url" doc:"Destination URL."`
+	Events         []string      `toml:"events" doc:"Event types delivered; empty delivers all."`
+	BatchSize      int           `toml:"batch_size" doc:"Events per request."`
+	BatchInterval  Duration      `toml:"batch_interval" doc:"Maximum wait before a partial batch is sent."`
+	Timeout        Duration      `toml:"timeout" doc:"Request timeout."`
+	Retry          Retry         `toml:"retry" doc:"Retry policy."`
+	HMACSecret     secret.Inline `toml:"hmac_secret" doc:"HMAC key for X-ALDAP-Signature, inline (warned)."`
+	HMACSecretFile string        `toml:"hmac_secret_file" doc:"File holding the HMAC key."`
+	HMACSecretEnv  string        `toml:"hmac_secret_env" doc:"Environment variable holding the HMAC key."`
+	Headers        Headers       `toml:"headers" doc:"Extra request headers; values render \"***\". Credentials belong in headers_file."`
+	HeadersFile    string        `toml:"headers_file" doc:"File with a TOML table of extra request headers (credentials such as Authorization); merged with headers, a name in both is an error."`
+	TLSCAFile      string        `toml:"tls_ca_file" doc:"CA bundle used to verify the destination."`
+	QueueSize      int           `toml:"queue_size" doc:"Pending events kept when the destination is slow."`
+	OnOverflow     string        `toml:"on_overflow" doc:"drop_oldest or block when the queue is full."`
 }
 
 // HMACSecretSource returns the webhook HMAC key source.
@@ -521,15 +529,16 @@ type Channel struct {
 	SubjectTemplate string        `toml:"subject_template" doc:"email: subject template."`
 
 	// webhook
-	URL            string            `toml:"url" doc:"webhook: destination URL."`
-	Method         string            `toml:"method" doc:"webhook: HTTP method."`
-	Headers        map[string]string `toml:"headers" doc:"webhook: extra request headers."`
-	BodyTemplate   string            `toml:"body_template" doc:"webhook: Go text/template producing the request body."`
-	HMACSecret     secret.Inline     `toml:"hmac_secret" doc:"webhook: HMAC key, inline (warned)."`
-	HMACSecretFile string            `toml:"hmac_secret_file" doc:"webhook: file holding the HMAC key."`
-	HMACSecretEnv  string            `toml:"hmac_secret_env" doc:"webhook: environment variable holding the HMAC key."`
-	Timeout        Duration          `toml:"timeout" doc:"Request timeout (every channel; SMTP: per command)."`
-	Retry          Retry             `toml:"retry" doc:"Retry policy (every channel); max counts the attempts after the first."`
+	URL            string        `toml:"url" doc:"webhook: destination URL."`
+	Method         string        `toml:"method" doc:"webhook: HTTP method."`
+	Headers        Headers       `toml:"headers" doc:"webhook: extra request headers; values render \"***\". Credentials belong in headers_file."`
+	HeadersFile    string        `toml:"headers_file" doc:"webhook: file with a TOML table of extra request headers (credentials such as Authorization); merged with headers, a name in both is an error."`
+	BodyTemplate   string        `toml:"body_template" doc:"webhook: Go text/template producing the request body."`
+	HMACSecret     secret.Inline `toml:"hmac_secret" doc:"webhook: HMAC key, inline (warned)."`
+	HMACSecretFile string        `toml:"hmac_secret_file" doc:"webhook: file holding the HMAC key."`
+	HMACSecretEnv  string        `toml:"hmac_secret_env" doc:"webhook: environment variable holding the HMAC key."`
+	Timeout        Duration      `toml:"timeout" doc:"Request timeout (every channel; SMTP: per command)."`
+	Retry          Retry         `toml:"retry" doc:"Retry policy (every channel); max counts the attempts after the first."`
 }
 
 // BotTokenSource returns the telegram bot token source.

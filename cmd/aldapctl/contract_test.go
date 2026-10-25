@@ -100,8 +100,11 @@ func (b *realBackend) Sync(_ context.Context, profile string) error {
 	return nil
 }
 
-func (b *realBackend) Record(context.Context, string, bool) error {
-	return fmt.Errorf("request recording: %w", api.ErrNotImplemented)
+func (b *realBackend) Record(_ context.Context, profile string, _ bool) error {
+	if profile != "virola" {
+		return fmt.Errorf("profile %q: %w", profile, api.ErrNoRecordFile)
+	}
+	return nil
 }
 
 // realAPI is internal/api serving the IPC socket and a loopback TCP port.
@@ -250,8 +253,11 @@ func TestContract_RealAPI(t *testing.T) {
 			if out := run(exitError, "test", "nope", "--filter", "(uid=jdoe)"); !strings.Contains(out, "not_found") {
 				t.Errorf("test unknown profile: %s", out)
 			}
-			if out := run(exitError, "record", "start", "virola", "--yes"); !strings.Contains(out, "HTTP 501") {
+			if out := run(0, "record", "start", "virola", "--yes"); !strings.Contains(out, "recording of virola: on") {
 				t.Errorf("record: %s", out)
+			}
+			if out := run(exitError, "record", "stop", "plain", "--yes"); !strings.Contains(out, "no_record_file") || !strings.Contains(out, "HTTP 409") {
+				t.Errorf("record without file: %s", out)
 			}
 		})
 	}

@@ -710,7 +710,7 @@ func TestAdmin_ConfigReloadSyncTestLearn(t *testing.T) {
 		want int
 	}{
 		"on": {nil, "virola", `{"state":"on"}`, http.StatusOK}, "unknown": {nil, "nope", `{"state":"on"}`, http.StatusNotFound},
-		"bad_state": {nil, "virola", `{"state":"maybe"}`, http.StatusBadRequest}, "not_implemented": {ErrNotImplemented, "virola", `{"state":"off"}`, http.StatusNotImplemented},
+		"bad_state": {nil, "virola", `{"state":"maybe"}`, http.StatusBadRequest}, "no_record_file": {ErrNoRecordFile, "virola", `{"state":"off"}`, http.StatusConflict},
 	} {
 		e.be.recordErr = tc.err
 		if w := e.do("POST", "/v1/profiles/"+tc.path+"/record", tokAdmin, tc.body); w.Code != tc.want {
@@ -762,7 +762,7 @@ func TestAdmin_ConfigReloadSyncTestLearn(t *testing.T) {
 }
 
 func TestBackendError_Mapping(t *testing.T) {
-	for err, want := range map[error]int{ErrNotFound: 404, ErrInvalidConfig: 400, ErrNoConfigFile: 409, ErrNotReplica: 409, ErrNotImplemented: 501,
+	for err, want := range map[error]int{ErrNotFound: 404, ErrInvalidConfig: 400, ErrNoConfigFile: 409, ErrNotReplica: 409, ErrNotImplemented: 501, ErrNoRecordFile: 409,
 		context.Canceled: 503, io.ErrUnexpectedEOF: 500} {
 		w := httptest.NewRecorder()
 		backendError(w, err)

@@ -582,7 +582,7 @@ func TestWebhook_BodyTemplate(t *testing.T) {
 	good, bad := webhookChannel(hook.srv.URL), webhookChannel(hook.srv.URL)
 	good.Name, good.HMACSecret = "good", ""
 	good.BodyTemplate = `{"text": {{json (printf "%s on %s" .Event .Hostname)}}, "ips": {{json (get .Data "ips")}}}`
-	good.Headers = map[string]string{"X-Team": "sec"}
+	good.Headers = config.Headers{"X-Team": "sec"}
 	good.Method = "PUT"
 	bad.Name, bad.BodyTemplate = "bad", `not json {{.Event}}`
 	e.configure(t, good, bad)
@@ -703,5 +703,30 @@ func TestVirola_Path(t *testing.T) {
 				t.Errorf("url = %q, want %q", v.url, tc.wantURL)
 			}
 		})
+	}
+}
+
+func TestWebhook_HeadersFile(t *testing.T) {
+	hook := newMockHTTP(t, `{}`, false)
+	e := newEnv(t, nil)
+	hf := filepath.Join(t.TempDir(), "h.toml")
+	if err := os.WriteFile(hf, []byte("Authorization = \"Bearer S3CR3T-notify-header\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := webhookChannel(hook.srv.URL)
+	c.Headers, c.HeadersFile = config.Headers{"X-Team": "sec"}, hf
+	e.configure(t, c)
+	e.n.Handle(e.record(attack("spray", "a", events.AttackStart, events.LevelHigh)))
+	e.n.Close()
+	if hook.n() != 1 || hook.hdrs[0].Get("Authorization") != "Bearer S3CR3T-notify-header" || hook.hdrs[0].Get("X-Team") != "sec" {
+		t.Fatalf("headers not delivered: %d", hook.n())
+	}
+	if strings.Contains(e.logs.String(), "S3CR3T") {
+		t.Error("header value in the logs")
+	}
+	missing := webhookChannel(hook.srv.URL)
+	missing.HeadersFile = filepath.Join(t.TempDir(), "none.toml")
+	if err := New(Options{Logger: slog.New(slog.DiscardHandler)}).Configure(config.Notify{Channels: []config.Channel{missing}}); err == nil {
+		t.Error("missing headers_file accepted")
 	}
 }

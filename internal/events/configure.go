@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"time"
 
@@ -19,6 +20,8 @@ type ConfigureOptions struct {
 	Secrets secret.Resolver
 	// UserAgent is sent by webhook sinks.
 	UserAgent string
+	// Logger receives warnings about secret files (nil: discarded).
+	Logger *slog.Logger
 }
 
 // BusFromConfig builds a bus with the filters and hashing of cfg; the
@@ -94,7 +97,16 @@ func buildSinks(cfg config.Events, o ConfigureOptions) ([]SinkSpec, error) {
 			}
 			key = v.Bytes()
 		}
-		ws, err := NewWebhookSink(WebhookOptions{URL: w.URL, Headers: w.Headers, Key: key, Timeout: w.Timeout.D(),
+		headers, warns, err := config.LoadHeaders(o.Secrets, w.Headers, w.HeadersFile)
+		for _, wn := range warns {
+			if o.Logger != nil {
+				o.Logger.Warn("events.webhook: headers_file", "sink", name, "warning", wn.Msg)
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("events.webhook %s: %w", name, err)
+		}
+		ws, err := NewWebhookSink(WebhookOptions{URL: w.URL, Headers: headers, Key: key, Timeout: w.Timeout.D(),
 			Retries: w.Retry.Max, Backoff: w.Retry.Backoff.D(), MaxBackoff: w.Retry.MaxBackoff.D(), TLSCAFile: w.TLSCAFile, UserAgent: o.UserAgent})
 		if err != nil {
 			return nil, fmt.Errorf("events.webhook %s: %w", name, err)

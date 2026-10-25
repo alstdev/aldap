@@ -42,6 +42,8 @@ var (
 	ErrNoConfigFile   = errors.New("the configuration does not come from a file")
 	ErrNotReplica     = errors.New("profile is not a replica (cache.mode)")
 	ErrNotImplemented = errors.New("not implemented")
+	// ErrNoRecordFile refuses recording for a profile without record.file.
+	ErrNoRecordFile = errors.New("record.file is not set for the profile")
 	// ErrInsecureListen refuses a non-loopback listener without TLS.
 	ErrInsecureListen = errors.New("TLS is mandatory when the API listens beyond loopback")
 )
@@ -416,6 +418,8 @@ func backendError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "no_config_file", err.Error())
 	case errors.Is(err, ErrNotReplica):
 		writeError(w, http.StatusConflict, "not_replica", err.Error())
+	case errors.Is(err, ErrNoRecordFile):
+		writeError(w, http.StatusConflict, "no_record_file", err.Error())
 	case errors.Is(err, ErrNotImplemented):
 		writeError(w, http.StatusNotImplemented, "not_implemented", err.Error())
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):

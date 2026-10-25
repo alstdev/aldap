@@ -124,7 +124,8 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `events.webhook[].hmac_secret` | secret |  | HMAC key for X-ALDAP-Signature, inline (warned). |
 | `events.webhook[].hmac_secret_file` | string |  | File holding the HMAC key. |
 | `events.webhook[].hmac_secret_env` | string |  | Environment variable holding the HMAC key. |
-| `events.webhook[].headers` | table of string | `{}` | Extra request headers. |
+| `events.webhook[].headers` | table of secret | `{}` | Extra request headers; values render "***". Credentials belong in headers_file. |
+| `events.webhook[].headers_file` | string |  | File with a TOML table of extra request headers (credentials such as Authorization); merged with headers, a name in both is an error. |
 | `events.webhook[].tls_ca_file` | string |  | CA bundle used to verify the destination. |
 | `events.webhook[].queue_size` | int | `10000` | Pending events kept when the destination is slow. |
 | `events.webhook[].on_overflow` | string | `"drop_oldest"` | drop_oldest or block when the queue is full. |
@@ -164,7 +165,8 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `notify.channel[].subject_template` | string |  | email: subject template. |
 | `notify.channel[].url` | string |  | webhook: destination URL. |
 | `notify.channel[].method` | string | `"POST"` | webhook: HTTP method. |
-| `notify.channel[].headers` | table of string | `{}` | webhook: extra request headers. |
+| `notify.channel[].headers` | table of secret | `{}` | webhook: extra request headers; values render "***". Credentials belong in headers_file. |
+| `notify.channel[].headers_file` | string |  | webhook: file with a TOML table of extra request headers (credentials such as Authorization); merged with headers, a name in both is an error. |
 | `notify.channel[].body_template` | string |  | webhook: Go text/template producing the request body. |
 | `notify.channel[].hmac_secret` | secret |  | webhook: HMAC key, inline (warned). |
 | `notify.channel[].hmac_secret_file` | string |  | webhook: file holding the HMAC key. |
@@ -331,8 +333,12 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `profile.<name>.ratelimit.lockdown.allow_cidrs` | []string | `inherit` | See ratelimit.lockdown.allow_cidrs. |
 | `profile.<name>.ratelimit.lockdown.allow_accounts` | []string | `inherit` | See ratelimit.lockdown.allow_accounts. |
 | `profile.<name>.shadow` | table |  | Shadow rules evaluated in parallel; differences are reported as shadow_diff. |
-| `profile.<name>.shadow.filter` | string |  | Shadow filter evaluated alongside the main one. |
-| `profile.<name>.shadow.bases` | []string | `[]` | Shadow bases evaluated alongside the main ones. |
+| `profile.<name>.shadow.filter` | string |  | Shadow filter evaluated alongside the main one (replaces filter for the shadow search). |
+| `profile.<name>.shadow.bases` | []string | `[]` | Shadow bases evaluated alongside the main ones (replace bases for the shadow search). |
+| `profile.<name>.shadow.max_parallel` | int | `4` | Shadow searches running at once; a search arriving when all are busy is not shadowed. |
+| `profile.<name>.shadow.timeout` | duration | `10s` | Upper bound of one shadow search; a shadow search that times out is not reported. |
 | `profile.<name>.record` | table |  | Request recording for replay. |
-| `profile.<name>.record.enabled` | bool | `false` | Record client requests (never passwords) as JSONL. |
-| `profile.<name>.record.file` | string |  | Output file. |
+| `profile.<name>.record.enabled` | bool | `false` | Record client searches from the start (never passwords, bind data or paging cookies) as JSON lines in the replay format; aldapctl record start/stop switches it at run time. |
+| `profile.<name>.record.file` | string |  | Output file (mode 0600); required to record. |
+| `profile.<name>.record.max_size_mb` | int | `100` | Rotate the file when it would exceed this size. |
+| `profile.<name>.record.max_files` | int | `5` | Rotated files kept (file.1 … file.N); the oldest is removed. |
