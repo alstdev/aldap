@@ -95,6 +95,6 @@ output (TESTING.md 41).
 
 `.github/workflows/samba.yml`: nightly, on pull requests that touch `deploy/samba-dc/**` or
 `cmd/aldap/samba_test.go`, by hand (`workflow_dispatch`) and before every release (called by
-`release.yml`). `timeout-minutes: 15`; a run takes about 5 minutes (image build, provisioning of
-both DCs in about 15 s, tests in about 15 s). Uploaded: `samba.log`, `samba.json`,
+`release.yml`). `timeout-minutes: 15`; the first run on GitHub (PR #14) took 2 minutes: image build about
+40 s, both DCs healthy after 11 s, tests 19 s. Uploaded: `samba.log`, `samba.json`,
 `junit-samba.xml` — never `deploy/samba-dc/secrets/`.
