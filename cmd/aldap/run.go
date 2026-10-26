@@ -45,6 +45,15 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 // signals and API reloads, stop. It is separate from runRun so tests can
 // drive it with a fake signal channel.
 func serve(ctx context.Context, path string, required bool, o daemonOptions, sigs <-chan os.Signal, stdout io.Writer) int {
+	if o.Inherited == nil {
+		// Socket activation: the descriptors are passed once, at start.
+		inherited, err := inheritSystemdSockets(os.Getenv, os.Getpid())
+		if err != nil {
+			fmt.Fprintf(o.LogOut, "aldap run: %v\n", err)
+			return 1
+		}
+		o.Inherited = inherited
+	}
 	d, err := loadDaemon(path, required, o)
 	if err != nil {
 		fmt.Fprintf(o.LogOut, "aldap run: %v\n", err)
@@ -126,7 +135,7 @@ func reload(ctx context.Context, old *daemon, path string, required bool, o daem
 	pool := old.pool
 	old.mu.Unlock()
 	if pool == nil {
-		pool = newSocketPool()
+		pool = newSocketPool(o.Inherited)
 	}
 	if err := next.takeOver(ctx, pool, old); err != nil {
 		// Nothing changed: the old generation keeps every listener.

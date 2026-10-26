@@ -32,6 +32,8 @@ type Guard interface {
 	PostBind(ip, account, pwHash string, ok bool, reason string, elapsed time.Duration) time.Duration
 	// PreSearch decides whether a search may be served.
 	PreSearch(ip, account string) ratelimit.Verdict
+	// Exempt reports whether ip is a service source of ratelimit.allow_cidrs.
+	Exempt(ip string) bool
 }
 
 // Observer receives what the intrusion detectors analyze (internal/ids).
@@ -54,6 +56,7 @@ func (noGuard) PreBind(string, string, string) ratelimit.Verdict {
 }
 func (noGuard) PostBind(string, string, string, bool, string, time.Duration) time.Duration { return 0 }
 func (noGuard) PreSearch(string, string) ratelimit.Verdict                                 { return ratelimit.Verdict{Allowed: true} }
+func (noGuard) Exempt(string) bool                                                         { return false }
 
 // Guard returns the guard of the directory.
 func (d *Directory) Guard() Guard { return d.o.Guard }

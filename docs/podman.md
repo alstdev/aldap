@@ -51,6 +51,7 @@ real source address. Which rootless network modes keep it (table "Listening TCP/
 | `slirp4netns` + `port_handler=slirp4netns` | yes | Podman **< 6.0** only: *"Support for the slirp4netns rootless network stack has been removed. Please use Pasta instead."* ([v6.0.0 release notes][rn6]). |
 | `slirp4netns` + default `port_handler=rootlesskit` | **no** | *"Rootlesskit changes the source IP address of incoming packets to … usually `10.0.2.100`"*. |
 | custom network (`podman network create`, `Network=<name>.network`, **podman-compose**) | **no** | Published ports go through `rootlessport`, *"a userspace proxy that does not preserve client source IPs"*. |
+| systemd socket activation (`listen = ["systemd:<name>"]`) | yes | systemd binds the socket on the host and passes it into the container; works with any network mode, traffic bypasses pasta ([below](#socket-activation)). |
 
 **Do not use `podman-compose` or a custom network with pasta.** Every client then arrives from one
 private address of the container network; ALDAP cannot tell clients apart: one attacker locks the
@@ -59,8 +60,8 @@ sees a single source. Podman 6.0 adds an experimental `rootless_port_forwarder="
 `containers.conf` that keeps the source IP on bridge networks; the default stays `rootlessport`
 ([v6.0.0 release notes][rn6]). Until that is the default, use `Network=pasta`.
 
-Systemd socket activation also preserves the source address ([eriksjolund][erik]), but ALDAP does
-not accept inherited sockets (`LISTEN_FDS`); it is not an option today.
+Systemd socket activation also preserves the source address ([eriksjolund][erik]); ALDAP accepts
+inherited sockets since Stage 12b ([Socket activation](#socket-activation)).
 
 ### ALDAP warns about it
 
@@ -77,7 +78,10 @@ distinct accounts, ALDAP logs a WARN and emits
 
 once per window and address. A legitimate single client — e.g. one application server that binds
 on behalf of its users — looks the same: put it in `ignore_cidrs` or raise the thresholds
-(`docs/config.md`).
+(`docs/config.md`). The detector does not count addresses that cannot be masking (Stage 12b):
+connections on sockets inherited from systemd, client addresses from a trusted PROXY protocol
+header (`docs/proxy-protocol.md`) and the profile's `ratelimit.allow_cidrs` (the application
+server of `docs/virola.md`).
 
 ## Ports below 1024
 
@@ -93,9 +97,134 @@ Rootless Podman cannot publish host ports below `net.ipv4.ip_unprivileged_port_s
   sudo sysctl --system
   ```
 
+- or let systemd bind the port and pass it in: [socket activation](#socket-activation); 636
+  itself needs a system socket unit ([system service with `User=`](#ports-below-1024-system-service-with-user)).
+
 Inside the container ALDAP keeps the profile ports (`listen = [":636"]`); the unit sets
 `Sysctl=net.ipv4.ip_unprivileged_port_start=0` for the container's own network namespace so the
 unprivileged ALDAP user can bind them with every capability dropped.
+
+## Socket activation
+
+`deploy/podman/aldap-virola.socket` + `deploy/podman/aldap-virola.container` (Quadlet) — use the
+pair **instead of** `aldap.container`. systemd binds the LDAPS port on the host and starts the
+container on the first connection (or at boot with `enable`); Podman hands the socket down
+through conmon and the OCI runtime to ALDAP ([socket activation tutorial][sa]). Clients keep their
+real source address whatever the container network is, and *"communication over the
+socket-activated socket does not pass through pasta so it has the same performance
+characteristics as the normal network on the host"* ([tutorial][sa]).
+
+```sh
+cp deploy/podman/aldap-virola.socket ~/.config/systemd/user/
+cp deploy/podman/aldap-virola.container ~/.config/containers/systemd/
+systemctl --user daemon-reload
+systemctl --user enable --now aldap-virola.socket
+loginctl enable-linger "$USER"
+```
+
+```toml
+[profile.virola]
+listen = ["systemd:virola"]      # FileDescriptorName=virola of the socket unit
+transport = "ldaps"
+[profile.virola.tls]
+san = ["ldap.example.org"]       # the name clients use
+```
+
+- **Names.** ALDAP reads `$LISTEN_PID`, `$LISTEN_FDS` and `$LISTEN_FDNAMES` (sd_listen_fds(3)) once
+  at start and removes them from its environment. `systemd:<name>` serves every socket passed
+  under that `FileDescriptorName=` (several `ListenStream=` lines of one unit share it). A name
+  that was not passed fails the start or the reload with the list of passed names; a passed
+  socket that no profile lists is logged as a WARN (its clients wait in the backlog). Only TCP
+  stream sockets are accepted.
+- **PID 1.** Podman forwards the three variables and sets `LISTEN_PID` to `1` (*"Force the PID to
+  `1` since we cannot rely on (all versions of) all runtimes to do it for us"*,
+  [libpod/container_internal_common.go][lpid]). ALDAP is the image entrypoint and PID 1; do not add
+  `RunInit=` (an init process would be PID 1 instead).
+- **Reload.** The sockets belong to the process, not to a configuration: `systemctl --user reload
+  aldap-virola` keeps them and their connections; a reload that removes `systemd:virola` stops
+  serving it but keeps the socket, a later reload that lists it again serves it again.
+- **Certificates.** An inherited socket counts as a wildcard address for the built-in
+  certificate (host name, `localhost`, loopback); add the names clients use to `tls.san`.
+- **Detector.** Connections on inherited sockets carry the clients' own addresses; the
+  masked-address detector does not count them. With log level `debug`, `connection accepted`
+  shows `direct_source=true`.
+- **Network.** The container still needs a network for the connections ALDAP opens (AD,
+  webhooks, notifications): keep `Network=pasta`. A profile on an inherited socket needs no
+  `PublishPort=`.
+
+### Ports below 1024: system service with `User=`
+
+A user manager binds ports only from `net.ipv4.ip_unprivileged_port_start` up (default 1024). The
+system manager runs as root and can bind 636; a **system** service with `User=` then runs rootless
+Podman with the inherited socket ([eriksjolund/podman-networking-docs][erik] "Socket activation
+(systemd system service with `User=`)", [podman-nginx-socket-activation Example 3][ngx3]).
+
+> **Warning: Podman marks this setup as unsupported.** podman-systemd.unit(5): *"Quadlet units do
+> not support running as a non-root user by defining the User, Group, or DynamicUser systemd
+> options."* ([podman-systemd.unit][quadlet]); since [containers/podman#26552][pr26552] the
+> generator logs *"Warning: using key User in the Service group is not supported - use at your
+> own risk"*. It is therefore a plain service unit with `podman run`, not a Quadlet file, and
+> eriksjolund lists it as experimental (*"How well this solution works is currently unknown"*).
+> Prefer the user units above with a high port, or a host-wide
+> `net.ipv4.ip_unprivileged_port_start`, unless 636 on the host is a hard requirement.
+
+`/etc/systemd/system/aldap-virola.socket`:
+
+```ini
+[Unit]
+Description=ALDAP LDAPS socket, profile virola
+
+[Socket]
+ListenStream=636
+FileDescriptorName=virola
+Accept=no
+
+[Install]
+WantedBy=sockets.target
+```
+
+`/etc/systemd/system/aldap-virola.service` (user `aldap` with UID 1001 — replace both, create
+the user, its Podman secrets and the image in its storage first):
+
+```ini
+[Unit]
+Description=ALDAP (rootless Podman as user aldap, socket activation)
+Requires=aldap-virola.socket user@1001.service
+After=aldap-virola.socket user@1001.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/run/user/1001/containers
+
+[Service]
+User=aldap
+Environment=PODMAN_SYSTEMD_UNIT=%n
+KillMode=mixed
+Delegate=yes
+Type=notify
+NotifyAccess=all
+SyslogIdentifier=%N
+ExecStart=/usr/bin/podman run --cidfile=/run/user/1001/%N.cid --cgroups=split --rm --replace -d \
+    --name aldap-virola --sdnotify=conmon --network=pasta \
+    --read-only --cap-drop=all --security-opt=no-new-privileges \
+    --userns=keep-id:uid=65532,gid=65532 \
+    --tmpfs /run/aldap:rw,size=8m,mode=0700,uid=65532,gid=65532 \
+    -v /home/aldap/.config/aldap:/etc/aldap:ro,Z -v aldap-state:/var/lib/aldap:U,Z \
+    --secret ad_pass,type=mount,uid=65532,gid=65532,mode=0400 \
+    --secret virola_bind,type=mount,uid=65532,gid=65532,mode=0400 \
+    -e ALDAP_CONFIG=/etc/aldap/aldap.toml --stop-timeout 40 \
+    localhost/aldap/aldap:latest
+ExecStop=/usr/bin/podman rm -f -i --cidfile=/run/user/1001/%N.cid
+ExecStopPost=-/usr/bin/podman rm -f -i --cidfile=/run/user/1001/%N.cid
+ExecReload=/usr/bin/podman kill --signal HUP aldap-virola
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now aldap-virola.socket
+```
 
 ## The Quadlet unit (`deploy/podman/aldap.container`)
 
@@ -166,3 +295,7 @@ not a `10.x`/`fd00::` container address.
 [sysctl]: https://github.com/torvalds/linux/blob/master/Documentation/networking/ip-sysctl.rst
 [quadlet]: https://github.com/containers/podman/blob/main/docs/source/markdown/podman-systemd.unit.5.md
 [moby]: https://github.com/moby/moby/issues/15793
+[sa]: https://github.com/containers/podman/blob/main/docs/tutorials/socket_activation.md
+[lpid]: https://github.com/containers/podman/blob/main/libpod/container_internal_common.go
+[ngx3]: https://github.com/eriksjolund/podman-nginx-socket-activation/tree/main/examples/example3
+[pr26552]: https://github.com/containers/podman/pull/26552

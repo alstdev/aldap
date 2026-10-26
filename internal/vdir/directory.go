@@ -303,8 +303,16 @@ func (d *Directory) observeSearch(sc *searchCtx) {
 		return
 	}
 	c := sc.conn
-	d.o.Observer.Search(ids.SearchObs{Profile: d.rules.Name, IP: c.ClientIP(), ConnID: c.ID(), Account: c.Bound().Name,
+	d.o.Observer.Search(ids.SearchObs{Profile: d.rules.Name, IP: c.ClientIP(), ConnID: c.ID(), Account: c.Bound().Name, KnownSource: d.knownSource(c),
 		Base: sc.req.Base, Scope: sc.req.Scope.String(), FilterNorm: redactFilter(sc.filter), Filter: sc.filter, Attrs: sc.req.Attrs, BaseKind: baseKindName(sc.kind)})
+}
+
+// knownSource reports a client address that cannot be a masking proxy or
+// container gateway: the client's own (socket activation, trusted PROXY
+// header) or a service source in the profile's ratelimit.allow_cidrs, such
+// as an application server binding for many users.
+func (d *Directory) knownSource(c *listener.Conn) bool {
+	return c.DirectSource() || d.o.Guard.Exempt(c.ClientIP())
 }
 
 // baseKindName names a base kind for the detectors.

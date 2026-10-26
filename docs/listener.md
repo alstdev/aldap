@@ -34,6 +34,10 @@ control codecs; `gldap` stays the server of `internal/testdir`
 1. Accept → global limit (`server.max_connections`) → per-IP limit
    (`limits.max_conns_per_ip`, shared by all listeners of a profile). Over
    a limit: the connection is closed and `rate_limited{reason=conn_limit_ip|conn_limit_global}` emitted.
+   With `proxy_protocol` (Stage 12b, `docs/proxy-protocol.md`) the PROXY
+   header is read between the two, off the accept loop and within the
+   first-packet deadline; the per-IP limit, every event and the guards then
+   use the client address of the header.
 2. `ldaps`: TLS handshake on the first read. Plain listeners: a non-BER first
    byte (for example a TLS ClientHello) closes the connection.
 3. Read loop with a 5 s deadline for the first message and `limits.idle_timeout`

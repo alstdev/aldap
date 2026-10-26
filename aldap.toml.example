@@ -147,6 +147,8 @@ ignore_cidrs      = []        # e.g. an application server binding for its users
 # ------------------------------------------------------------------ profiles
 [profile.virola]
 listen            = [":636"]
+# listen          = ["systemd:virola"]   # socket activation: FileDescriptorName=virola (docs/podman.md)
+# proxy_protocol  = { enabled = true, trusted_cidrs = ["10.89.0.2/32"] }   # behind a TCP proxy (docs/proxy-protocol.md)
 transport         = "ldaps"        # ldaps | ldap | starttls | ldap+starttls
 starttls_required = false
 upstream          = "ad-main"

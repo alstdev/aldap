@@ -46,7 +46,7 @@ func (d *Directory) Bind(ctx context.Context, c *listener.Conn, name string, pas
 		d.log.Info("bind blocked", "conn_id", c.ID(), "client_ip", ip, "reason", v.Reason)
 		if d.o.Observer != nil && acct != "" {
 			// The detectors see the attempt even though it was refused.
-			d.o.Observer.Bind(ids.BindObs{Profile: d.rules.Name, IP: ip, ConnID: c.ID(), Account: acct, PwHash: pwHash, OK: false, Reason: v.Reason})
+			d.o.Observer.Bind(ids.BindObs{Profile: d.rules.Name, IP: ip, KnownSource: d.knownSource(c), ConnID: c.ID(), Account: acct, PwHash: pwHash, OK: false, Reason: v.Reason})
 		}
 		return listener.Result{Code: v.Code}
 	}
@@ -60,7 +60,7 @@ func (d *Directory) Bind(ctx context.Context, c *listener.Conn, name string, pas
 		d.o.Metrics.Bind(d.rules.Name, "fail", elapsed)
 	}
 	if d.o.Observer != nil && b.kind != listener.BindAnonymous {
-		d.o.Observer.Bind(ids.BindObs{Profile: d.rules.Name, IP: ip, ConnID: c.ID(), Account: acct, PwHash: pwHash, OK: ok, Reason: string(b.reason)})
+		d.o.Observer.Bind(ids.BindObs{Profile: d.rules.Name, IP: ip, KnownSource: d.knownSource(c), ConnID: c.ID(), Account: acct, PwHash: pwHash, OK: ok, Reason: string(b.reason)})
 	}
 	if wait > 0 {
 		d.o.Sleep(ctx, wait)

@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/alstdev/aldap/internal/config"
 	"github.com/alstdev/aldap/internal/listener"
 )
 
@@ -62,18 +64,41 @@ type socketPool struct {
 	serving sync.WaitGroup
 	bg      sync.WaitGroup
 	closed  bool
+	// inherited are the sockets passed by systemd (nil = none).
+	inherited *inheritedSockets
 }
 
-// socketEntry is one listening socket; srv is nil until the first apply.
+// socketEntry is one listen entry: the socket bound for an address, or
+// the leases of every socket systemd passed under a name. srv is nil until
+// the first apply.
 type socketEntry struct {
 	addr    string
 	profile string
-	ln      net.Listener
+	lns     []net.Listener
 	srv     *listener.Server
+	// inherited marks sockets passed by systemd: peer addresses are the
+	// clients' own (listener.Config.DirectSource).
+	inherited bool
 }
 
-func newSocketPool() *socketPool {
-	return &socketPool{entries: map[string]*socketEntry{}}
+// bound returns the addresses of the entry's sockets.
+func (e *socketEntry) bound() []string {
+	out := make([]string, 0, len(e.lns))
+	for _, ln := range e.lns {
+		out = append(out, ln.Addr().String())
+	}
+	return out
+}
+
+// closeAll closes the sockets of an entry that has no server.
+func (e *socketEntry) closeAll() {
+	for _, ln := range e.lns {
+		_ = ln.Close() //nolint:errcheck // never served; a lease keeps the inherited socket
+	}
+}
+
+func newSocketPool(inherited *inheritedSockets) *socketPool {
+	return &socketPool{entries: map[string]*socketEntry{}, inherited: inherited}
 }
 
 // open binds the addresses of specs that have no socket yet. On failure
@@ -90,15 +115,25 @@ func (p *socketPool) open(ctx context.Context, specs []socketSpec) error {
 		if _, ok := p.entries[s.key]; ok {
 			continue
 		}
-		ln, err := lc.Listen(ctx, "tcp", s.addr)
+		e := &socketEntry{addr: s.addr}
+		var err error
+		if name, ok := strings.CutPrefix(s.addr, config.ListenSystemdPrefix); ok {
+			e.inherited = true
+			e.lns, err = p.inherited.lease(name)
+		} else {
+			var ln net.Listener
+			if ln, err = lc.Listen(ctx, "tcp", s.addr); err == nil {
+				e.lns = []net.Listener{ln}
+			}
+		}
 		if err != nil {
 			for _, k := range opened {
-				_ = p.entries[k].ln.Close() //nolint:errcheck // undoing a failed open
+				p.entries[k].closeAll() // undoing a failed open
 				delete(p.entries, k)
 			}
 			return fmt.Errorf("profile.%s: listen %s: %w", s.profile.name, s.addr, err)
 		}
-		p.entries[s.key] = &socketEntry{addr: s.addr, ln: ln}
+		p.entries[s.key] = e
 		opened = append(opened, s.key)
 	}
 	return nil
@@ -124,20 +159,22 @@ func (p *socketPool) apply(d *daemon, specs []socketSpec) []func(context.Context
 			continue
 		}
 		e.profile = s.profile.name
+		lcfg := s.profile.lcfg
+		lcfg.DirectSource = e.inherited
 		if e.srv != nil {
-			wait, err := e.srv.Reconfigure(s.profile.lcfg)
+			wait, err := e.srv.Reconfigure(lcfg)
 			if err != nil {
-				d.log.Error("listener not reconfigured", "profile", s.profile.name, "addr", e.ln.Addr().String(), "err", err)
+				d.log.Error("listener not reconfigured", "profile", s.profile.name, "addr", e.addr, "err", err)
 				continue
 			}
 			waits = append(waits, wait)
 			continue
 		}
-		srv, err := listener.New(s.profile.lcfg)
+		srv, err := listener.New(lcfg)
 		if err != nil {
 			// buildProfile checked the configuration; never reached.
-			d.log.Error("listener not started", "profile", s.profile.name, "addr", e.ln.Addr().String(), "err", err)
-			_ = e.ln.Close() //nolint:errcheck // the socket has no server
+			d.log.Error("listener not started", "profile", s.profile.name, "addr", e.addr, "err", err)
+			e.closeAll()
 			delete(p.entries, s.key)
 			continue
 		}
@@ -150,22 +187,42 @@ func (p *socketPool) apply(d *daemon, specs []socketSpec) []func(context.Context
 			continue
 		}
 		delete(p.entries, key)
-		d.log.Info("listener removed, draining", "profile", e.profile, "addr", e.ln.Addr().String())
+		d.log.Info("listener removed, draining", "profile", e.profile, "addr", e.addr)
 		p.drain(e, timeout)
 	}
+	p.warnUnused(d)
 	return waits
 }
 
-// serve runs the accept loop of e; the caller holds p.mu.
-func (p *socketPool) serve(log *slog.Logger, e *socketEntry) {
-	srv, ln, profile := e.srv, e.ln, e.profile
-	p.serving.Add(1)
-	go func() {
-		defer p.serving.Done()
-		if err := srv.Serve(ln); err != nil && !errors.Is(err, listener.ErrServerClosed) {
-			log.Error("listener stopped", "profile", profile, "addr", ln.Addr().String(), "err", err)
+// warnUnused reports inherited sockets no profile serves: systemd keeps
+// accepting into their backlog and those clients wait. The caller holds p.mu.
+func (p *socketPool) warnUnused(d *daemon) {
+	used := map[string]bool{}
+	for _, e := range p.entries {
+		if name, ok := strings.CutPrefix(e.addr, config.ListenSystemdPrefix); ok {
+			used[name] = true
 		}
-	}()
+	}
+	for _, name := range p.inherited.names() {
+		if !used[name] {
+			d.log.Warn("socket passed by systemd is not served by any profile; its clients wait until a profile lists it",
+				"socket", config.ListenSystemdPrefix+name)
+		}
+	}
+}
+
+// serve runs the accept loops of e; the caller holds p.mu.
+func (p *socketPool) serve(log *slog.Logger, e *socketEntry) {
+	srv, profile := e.srv, e.profile
+	for _, ln := range e.lns {
+		p.serving.Add(1)
+		go func() {
+			defer p.serving.Done()
+			if err := srv.Serve(ln); err != nil && !errors.Is(err, listener.ErrServerClosed) {
+				log.Error("listener stopped", "profile", profile, "addr", ln.Addr().String(), "err", err)
+			}
+		}()
+	}
 }
 
 // drain shuts the server of a removed socket down in the background.
@@ -174,7 +231,7 @@ func (p *socketPool) drain(e *socketEntry, timeout time.Duration) {
 	go func() {
 		defer p.bg.Done()
 		if e.srv == nil {
-			_ = e.ln.Close() //nolint:errcheck // never served
+			e.closeAll()
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -200,7 +257,7 @@ func (p *socketPool) addrs(specs []socketSpec) []string {
 	out := make([]string, 0, len(specs))
 	for _, s := range specs {
 		if e := p.entries[s.key]; e != nil {
-			out = append(out, e.ln.Addr().String())
+			out = append(out, e.bound()...)
 		}
 	}
 	return out
@@ -221,7 +278,7 @@ func (p *socketPool) shutdown(ctx context.Context, log *slog.Logger) {
 		go func() {
 			defer wg.Done()
 			if e.srv == nil {
-				_ = e.ln.Close() //nolint:errcheck // never served
+				e.closeAll()
 				return
 			}
 			if err := e.srv.Shutdown(ctx); err != nil {
@@ -232,4 +289,5 @@ func (p *socketPool) shutdown(ctx context.Context, log *slog.Logger) {
 	wg.Wait()
 	p.serving.Wait()
 	p.bg.Wait()
+	p.inherited.close()
 }

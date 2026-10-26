@@ -551,7 +551,9 @@ func (p *Policy) Limiter() *Limiter { return p.l }
 // Config returns the effective configuration.
 func (p *Policy) Config() config.Ratelimit { return p.cfg }
 
-// Exempt reports whether the source IP is in allow_cidrs (no limits).
+// Exempt reports whether the source IP is in allow_cidrs: no limits keyed
+// by the address (IP lock, ip.* rates, tarpit, progressive delay). Account
+// locks, the negative cache and lockdown still apply.
 func (p *Policy) Exempt(ip string) bool { return inNets(p.allowNets, ip) }
 
 // lockdownBlocks reports whether lockdown refuses this source/account.
@@ -607,10 +609,11 @@ func (p *Policy) PreBind(ip, account, pwHash string) Verdict {
 	if p.lockdownBlocks(ip, acct) {
 		return p.refuse(ReasonLockdown, p.lockCode)
 	}
-	if p.Exempt(ip) {
-		return Verdict{Allowed: true}
-	}
-	if _, locked := p.l.IPLocked(ip, now); locked {
+	// allow_cidrs only lifts the limits keyed by the source address (IP
+	// lock, ip.* rate, tarpit): an application server binding for many
+	// users must not turn into a way around account locks.
+	exempt := p.Exempt(ip)
+	if _, locked := p.l.IPLocked(ip, now); locked && !exempt {
 		return p.refuse(ReasonIPLocked, p.lockCode)
 	}
 	if acct != "" && !p.allowAccts[acct] {
@@ -629,6 +632,9 @@ func (p *Policy) PreBind(ip, account, pwHash string) Verdict {
 		if ok {
 			return p.refuse(ReasonNegativeCache, ldap.LDAPResultInvalidCredentials)
 		}
+	}
+	if exempt {
+		return Verdict{Allowed: true}
 	}
 	if ip != "" && !p.take("bind:"+ip, now, p.cfg.IP.BindRPS, p.cfg.IP.BindBurst) {
 		return p.refuse(ReasonRateLimited, ldap.LDAPResultBusy)

@@ -1,0 +1,56 @@
+# ALDAP — rootless Podman Quadlet unit with systemd socket activation
+# (docs/podman.md "Socket activation"). Started by aldap-virola.socket,
+# which holds the LDAPS port on the host; Podman passes the socket into the
+# container ($LISTEN_FDS, $LISTEN_FDNAMES, $LISTEN_PID forced to 1) and
+# ALDAP serves it as listen = ["systemd:virola"].
+#
+# ALDAP must be PID 1 of the container for $LISTEN_PID=1 to match: keep
+# the image entrypoint, do not add RunInit=.
+
+[Unit]
+Description=ALDAP LDAP proxy (rootless Podman, socket activation)
+Documentation=https://github.com/alstdev/aldap/blob/main/docs/podman.md
+Requires=aldap-virola.socket
+After=aldap-virola.socket
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=aldap-virola
+Image=localhost/aldap/aldap:latest
+
+# The activated socket does not depend on the container network; pasta is
+# only used for the connections ALDAP makes itself (upstream AD, webhooks,
+# notifications). No PublishPort= for the LDAPS profile: the socket unit owns
+# the port.
+Network=pasta
+# PublishPort=127.0.0.1:8636:8636
+
+# Profiles that still bind ports inside the container (honeypot on 1389, …).
+Sysctl=net.ipv4.ip_unprivileged_port_start=0
+
+# Hardening (same as aldap.container)
+ReadOnly=true
+DropCapability=all
+NoNewPrivileges=true
+UserNS=keep-id:uid=65532,gid=65532
+Tmpfs=/run/aldap:rw,size=8m,mode=0700,uid=65532,gid=65532
+
+Volume=%h/.config/aldap:/etc/aldap:ro,Z
+Volume=aldap-state:/var/lib/aldap:U,Z
+
+Secret=ad_pass,type=mount,uid=65532,gid=65532,mode=0400
+Secret=virola_bind,type=mount,uid=65532,gid=65532,mode=0400
+
+Environment=ALDAP_CONFIG=/etc/aldap/aldap.toml
+StopTimeout=40
+# Optional: Notify=true lets ALDAP report READY=1 itself (sd_notify).
+
+[Service]
+# A reload keeps the inherited socket (hot reload, SPEC §3.6).
+ExecReload=/usr/bin/podman kill --signal HUP aldap-virola
+Restart=on-failure
+TimeoutStopSec=45
+
+[Install]
+WantedBy=default.target

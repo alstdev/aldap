@@ -483,6 +483,13 @@ func TestValidate_Rules(t *testing.T) {
 		{"profile_bad_listen", "[profile.p]\nlisten = [\"636\"]\n", "profile.p.listen[0]", "host:port", false},
 		{"profile_bad_port", "[profile.p]\nlisten = [\":99999\"]\n", "profile.p.listen[0]", "port", false},
 		{"profile_transport", "[profile.p]\nlisten = [\":1\"]\ntransport = \"tls\"\n", "profile.p.transport", "not one of", false},
+		{"profile_systemd_empty", "[profile.p]\nlisten = [\"systemd:\"]\n", "profile.p.listen[0]", "socket name", false},
+		{"profile_systemd_space", "[profile.p]\nlisten = [\"systemd:my sock\"]\n", "profile.p.listen[0]", "socket name", false},
+		{"profile_systemd_colon", "[profile.p]\nlisten = [\"systemd:a:b\"]\n", "profile.p.listen[0]", "socket name", false},
+		{"profile_systemd_dup", "[profile.p]\nlisten = [\"systemd:s\"]\n[profile.q]\nlisten = [\"systemd:s\"]\n", "profile.q.listen[0]", "already used", false},
+		{"profile_proxy_no_trusted", "[profile.p]\nlisten = [\":1\"]\nproxy_protocol = { enabled = true }\n", "profile.p.proxy_protocol.trusted_cidrs", "required", false},
+		{"profile_proxy_trust_all", "[profile.p]\nlisten = [\":1\"]\nproxy_protocol = { enabled = true, trusted_cidrs = [\"10.0.0.1\", \"::/0\"] }\n", "profile.p.proxy_protocol.trusted_cidrs[1]", "every address", false},
+		{"profile_proxy_bad_cidr", "[profile.p]\nlisten = [\":1\"]\n[profile.p.proxy_protocol]\ntrusted_cidrs = [\"nope\"]\n", "profile.p.proxy_protocol.trusted_cidrs[0]", "CIDR", false},
 		{"profile_plain_warn", "[profile.p]\nlisten = [\":1\"]\ntransport = \"ldap\"\n", "profile.p.transport", "clear text", true},
 		{"profile_starttls_required_ldaps", "[profile.p]\nlisten = [\":1\"]\nstarttls_required = true\n", "profile.p.starttls_required", "starttls", false},
 		{"profile_unknown_upstream", "[profile.p]\nlisten = [\":1\"]\nupstream = \"ghost\"\n", "profile.p.upstream", "not defined", false},
@@ -761,5 +768,31 @@ func TestValidate_ProfileTemplateFuncs(t *testing.T) {
 		if strings.Contains(is.Path, "computed") || strings.Contains(is.Path, "honeytoken_template") {
 			t.Errorf("unexpected issue %v", is)
 		}
+	}
+}
+
+// TestLoad_SocketActivationAndProxyProtocol: systemd socket names and the
+// inline proxy_protocol table load and validate.
+func TestLoad_SocketActivationAndProxyProtocol(t *testing.T) {
+	t.Parallel()
+	body := strings.Replace(minimalTOML, `listen = [":636"]`,
+		`listen = ["systemd:virola", ":1636"]
+proxy_protocol = { enabled = true, trusted_cidrs = ["10.89.0.2/32", "fd00::2"] }`, 1)
+	cfg := mustLoad(t, body)
+	p := cfg.Profiles["app"]
+	if got := p.Listen; len(got) != 2 || got[0] != "systemd:virola" {
+		t.Fatalf("listen = %v", got)
+	}
+	if !p.ProxyProtocol.Enabled || len(p.ProxyProtocol.TrustedCIDRs) != 2 {
+		t.Fatalf("proxy_protocol = %+v", p.ProxyProtocol)
+	}
+	if rep := validate(cfg); !rep.OK() {
+		t.Fatalf("errors: %v", rep.Errors)
+	}
+	if d := DefaultProfile().ProxyProtocol; d.Enabled || d.TrustedCIDRs == nil {
+		t.Errorf("default proxy_protocol = %+v", d)
+	}
+	if _, err := loadString(t, strings.Replace(body, "trusted_cidrs", "trusted", 1)); err == nil {
+		t.Error("unknown key in proxy_protocol accepted")
 	}
 }
