@@ -3,6 +3,8 @@
 /artifacts/
 *.test
 *.out
+/aldap
+/aldapctl
 
 # Local runtime files (never commit)
 /aldap.toml
