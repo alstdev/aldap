@@ -57,9 +57,12 @@ func newMaskedTracker() *maskedTracker {
 	return &maskedTracker{alerted: map[string]time.Time{}}
 }
 
-// observe counts one bind or search of account from ip.
-func (m *maskedTracker) observe(cfg config.ClientIPMasked, ip, account string, now time.Time) {
-	if !cfg.Enabled || ip == "" {
+// observe counts one bind or search of account from ip. Known sources
+// (KnownSource: the client's own address or an allow_cidrs service source)
+// are not counted at all, so a masking address among the rest still stands
+// out.
+func (m *maskedTracker) observe(cfg config.ClientIPMasked, ip, account string, known bool, now time.Time) {
+	if !cfg.Enabled || ip == "" || known {
 		return
 	}
 	width := cfg.Window.D() / maskedBuckets

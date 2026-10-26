@@ -46,6 +46,7 @@ type Bound struct {
 type Conn struct {
 	id        string
 	remote    net.Addr
+	direct    bool
 	profile   string
 	transport string
 	opened    time.Time
@@ -168,10 +169,17 @@ func (c *Conn) ID() string { return c.id }
 // Profile returns the profile name of the listener.
 func (c *Conn) Profile() string { return c.profile }
 
-// RemoteAddr returns the peer address.
+// RemoteAddr returns the client address (see ClientIP).
 func (c *Conn) RemoteAddr() net.Addr { return c.remote }
 
-// ClientIP returns the peer IP as text ("" when unknown).
+// DirectSource reports whether the client address is known to be the
+// client's own: the connection came through a socket inherited from systemd
+// or its address was taken from a trusted PROXY protocol header. The
+// masked-address detector skips such connections.
+func (c *Conn) DirectSource() bool { return c.direct }
+
+// ClientIP returns the client IP as text ("" when unknown): the peer, or
+// the source of a trusted PROXY protocol header.
 func (c *Conn) ClientIP() string {
 	ip, _ := splitHostPort(c.remote)
 	return ip

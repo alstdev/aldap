@@ -336,7 +336,42 @@ func TestSystemLog_WarningsAndErrors(t *testing.T) {
 // deploy/podman/aldap.container (docs/podman.md): the client IP is only
 // preserved with pasta and no custom network.
 func TestPodmanQuadlet(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "deploy", "podman", "aldap.container"))
+	keys := unitKeys(t, "aldap.container")
+	checkQuadletHardening(t, keys)
+	if len(keys["[Container]PublishPort"]) == 0 || len(keys["[Container]HealthCmd"]) != 0 {
+		t.Errorf("ports %q, HealthCmd %q (the image HEALTHCHECK is used)", keys["[Container]PublishPort"], keys["[Container]HealthCmd"])
+	}
+}
+
+// TestPodmanSocketActivation keeps the socket-activated pair: the socket
+// names its descriptors "virola" (listen = ["systemd:virola"]), the
+// container is started by it, publishes no port for it and runs ALDAP as
+// PID 1 (Podman sets LISTEN_PID=1).
+func TestPodmanSocketActivation(t *testing.T) {
+	sock := unitKeys(t, "aldap-virola.socket")
+	if got := sock["[Socket]FileDescriptorName"]; len(got) != 1 || got[0] != "virola" {
+		t.Errorf("FileDescriptorName = %q", got)
+	}
+	if len(sock["[Socket]ListenStream"]) == 0 || len(sock["[Socket]Accept"]) != 1 || sock["[Socket]Accept"][0] != "no" {
+		t.Errorf("ListenStream %q, Accept %q", sock["[Socket]ListenStream"], sock["[Socket]Accept"])
+	}
+	keys := unitKeys(t, "aldap-virola.container")
+	checkQuadletHardening(t, keys)
+	if got := keys["[Unit]Requires"]; len(got) != 1 || got[0] != "aldap-virola.socket" {
+		t.Errorf("Requires = %q", got)
+	}
+	if len(keys["[Container]PublishPort"]) != 0 || len(keys["[Container]RunInit"]) != 0 {
+		t.Errorf("PublishPort %q, RunInit %q", keys["[Container]PublishPort"], keys["[Container]RunInit"])
+	}
+	if got := keys["[Service]ExecReload"]; len(got) != 1 || !strings.HasSuffix(got[0], " aldap-virola") {
+		t.Errorf("ExecReload = %q", got)
+	}
+}
+
+// unitKeys parses a systemd unit of deploy/podman into "[Section]Key" → values.
+func unitKeys(t *testing.T, name string) map[string][]string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "deploy", "podman", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,11 +386,17 @@ func TestPodmanQuadlet(t *testing.T) {
 		default:
 			k, v, ok := strings.Cut(line, "=")
 			if !ok {
-				t.Fatalf("not a key: %q", line)
+				t.Fatalf("%s: not a key: %q", name, line)
 			}
 			keys[section+k] = append(keys[section+k], v)
 		}
 	}
+	return keys
+}
+
+// checkQuadletHardening checks the keys every ALDAP Quadlet unit shares.
+func checkQuadletHardening(t *testing.T, keys map[string][]string) {
+	t.Helper()
 	want := map[string]string{
 		"[Container]Network": "pasta", "[Container]ReadOnly": "true", "[Container]DropCapability": "all",
 		"[Container]NoNewPrivileges": "true", "[Container]UserNS": "keep-id:uid=65532,gid=65532",
@@ -382,8 +423,5 @@ func TestPodmanQuadlet(t *testing.T) {
 		if !strings.Contains(v, "mode=0400") || !strings.Contains(v, "uid=65532") {
 			t.Errorf("secret %q readable beyond the ALDAP user", v)
 		}
-	}
-	if len(keys["[Container]PublishPort"]) == 0 || len(keys["[Container]HealthCmd"]) != 0 {
-		t.Errorf("ports %q, HealthCmd %q (the image HEALTHCHECK is used)", keys["[Container]PublishPort"], keys["[Container]HealthCmd"])
 	}
 }

@@ -70,6 +70,13 @@ type Config struct {
 	Fingerprints Fingerprinter
 	// Metrics receives connection gauges (nil = none).
 	Metrics *metrics.Metrics
+
+	// ProxyProtocol accepts a PROXY protocol header from trusted proxies
+	// (nil = disabled): the header's source becomes the client address.
+	ProxyProtocol *ProxyProtocol
+	// DirectSource marks a listener whose peer addresses are known to be
+	// the clients' own (a socket inherited from systemd): Conn.DirectSource.
+	DirectSource bool
 }
 
 // Server serves one profile on one or more addresses. Its configuration
@@ -85,8 +92,11 @@ type Server struct {
 	mu        sync.Mutex
 	listeners map[net.Listener]struct{}
 	conns     map[*Conn]struct{}
+	// pending holds connections still sending their PROXY header.
+	pending   map[net.Conn]struct{}
 	closed    bool
 	wg        sync.WaitGroup
+	proxyWarn proxyWarnings
 }
 
 // generation is one configuration of a Server. Requests hold it (acquire)
@@ -186,7 +196,7 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{listeners: map[net.Listener]struct{}{}, conns: map[*Conn]struct{}{}}
+	s := &Server{listeners: map[net.Listener]struct{}{}, conns: map[*Conn]struct{}{}, pending: map[net.Conn]struct{}{}}
 	s.gen.Store(g)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	return s, nil
@@ -313,31 +323,71 @@ var ErrServerClosed = errors.New("listener: server closed")
 
 // accept applies the connection limits and starts the per-connection loop.
 // The connection keeps the limiters it was counted against, so a reload
-// that replaces them releases into the right ones.
+// that replaces them releases into the right ones. With proxy_protocol the
+// header is read first, off the accept loop, and the per-IP limit counts
+// the client address it carries.
 func (s *Server) accept(nc net.Conn) {
 	g := s.current()
-	ip, _ := splitHostPort(nc.RemoteAddr())
-	global, perIP := g.cfg.Global, g.cfg.PerIP
+	global := g.cfg.Global
 	if global != nil && !global.Acquire() {
+		ip, _ := splitHostPort(nc.RemoteAddr())
 		g.rejected(nc, ip, "conn_limit_global", global.Limit())
 		return
 	}
-	if perIP != nil && !perIP.Acquire(ip) {
+	releaseGlobal := func() {
 		if global != nil {
 			global.Release()
 		}
-		g.rejected(nc, ip, "conn_limit_ip", perIP.Limit())
+	}
+	if g.cfg.ProxyProtocol == nil {
+		s.open(g, nc, nc, nc.RemoteAddr(), g.cfg.DirectSource, releaseGlobal)
+		return
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		releaseGlobal()
+		closeQuietly(nc, g.log)
+		return
+	}
+	s.pending[nc] = struct{}{}
+	s.wg.Add(1)
+	s.mu.Unlock()
+	go func() {
+		defer s.wg.Done()
+		br := bufio.NewReaderSize(nc, readBufferSize)
+		remote, direct, ok := s.resolveProxy(g, nc, br)
+		s.mu.Lock()
+		delete(s.pending, nc)
+		s.mu.Unlock()
+		if !ok {
+			releaseGlobal()
+			closeQuietly(nc, g.log)
+			return
+		}
+		s.open(g, nc, &bufferedConn{Conn: nc, r: br}, remote, direct || g.cfg.DirectSource, releaseGlobal)
+	}()
+}
+
+// open counts the connection against the per-IP limit of remote (the
+// client address) and starts its loop; raw is the accepted socket, nc what
+// the connection reads and writes through. releaseGlobal frees the global
+// slot taken by accept.
+func (s *Server) open(g *generation, raw, nc net.Conn, remote net.Addr, direct bool, releaseGlobal func()) {
+	ip, _ := splitHostPort(remote)
+	perIP := g.cfg.PerIP
+	if perIP != nil && !perIP.Acquire(ip) {
+		releaseGlobal()
+		g.rejected(raw, ip, "conn_limit_ip", perIP.Limit())
 		return
 	}
 	release := func() {
 		if perIP != nil {
 			perIP.Release(ip)
 		}
-		if global != nil {
-			global.Release()
-		}
+		releaseGlobal()
 	}
-	c := &Conn{id: fmt.Sprintf("c-%08x", s.nextID.Add(1)), remote: nc.RemoteAddr(), profile: g.cfg.Profile, transport: g.cfg.Transport, opened: time.Now(), nc: nc}
+	c := &Conn{id: fmt.Sprintf("c-%08x", s.nextID.Add(1)), remote: remote, direct: direct, profile: g.cfg.Profile, transport: g.cfg.Transport, opened: time.Now(), nc: nc}
 	if g.ldaps {
 		tc := tls.Server(nc, g.tlsFor(c))
 		c.nc = tc
@@ -348,13 +398,18 @@ func (s *Server) accept(nc net.Conn) {
 	if s.closed {
 		s.mu.Unlock()
 		release()
-		closeQuietly(nc, g.log)
+		closeQuietly(raw, g.log)
 		return
 	}
 	s.conns[c] = struct{}{}
 	s.wg.Add(1)
 	s.mu.Unlock()
-	g.log.Debug("connection accepted", "conn_id", c.id, "client_ip", ip, "client_port", c.ClientPort())
+	attrs := []any{"conn_id", c.id, "client_ip", ip, "client_port", c.ClientPort(), "direct_source", direct}
+	if peer := raw.RemoteAddr(); peer != remote {
+		proxyIP, _ := splitHostPort(peer)
+		attrs = append(attrs, "proxy_ip", proxyIP)
+	}
+	g.log.Debug("connection accepted", attrs...)
 	m := g.cfg.Metrics
 	m.Connection(c.profile, 1)
 	go func() {
@@ -434,6 +489,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	conns := make([]*Conn, 0, len(s.conns))
 	for c := range s.conns {
 		conns = append(conns, c)
+	}
+	for nc := range s.pending {
+		// Still sending its PROXY header: no request to finish.
+		closeQuietly(nc, g.log)
 	}
 	s.mu.Unlock()
 	for _, c := range conns {

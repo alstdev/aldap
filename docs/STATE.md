@@ -2,12 +2,22 @@
 
 Оновлюється наприкінці кожного етапу (5–10 рядків). Читати першим після `CLAUDE.md`.
 
+## Stage 12b — Socket activation, PROXY protocol, Virola (завершено 2026-10-26)
+- Зроблено: `cmd/aldap/activation.go` — успадковані сокети systemd (`LISTEN_PID/FDS/FDNAMES`, лише TCP, змінні прибираються з env), належать процесу: accept-горутина на сокет + «лізинг» для `listener.Server`; reload їх не закриває, навіть коли прибирає `systemd:<name>`. `socketPool` — запис = кілька сокетів (`lns`), `DirectSource` для успадкованих. `internal/listener/proxyproto.go` — PROXY v1/v2 (власний парсер), читання заголовка поза accept-циклом у межах first-packet timeout, per-IP ліміт за IP із заголовка, `insecure_config{proxy_protocol_untrusted}`. Конфіг: `profile.<name>.proxy_protocol`, `systemd:<name>` у `listen` (валідація імені, унікальність, `trusted_cidrs` обов'язковий, /0 заборонено).
+- Виправлено баг: `ratelimit.Policy.PreBind` для `allow_cidrs` пропускав lock акаунта і негативний кеш; тепер звільняє лише від IP-лімітів. `ids` — `KnownSource` (успадкований сокет, довірений PROXY, `allow_cidrs` профілю) не рахується детектором `client_ip_masked`.
+- Deploy/docs: `deploy/podman/aldap-virola.socket` + `aldap-virola.container`; `docs/podman.md` (socket activation, system-сервіс з `User=` з попередженням), `docs/proxy-protocol.md` (Traefik ≥ 3.5.2, `serversTransport` + `@file`), `docs/virola.md`, `docs/security.md`, `docs/listener.md`.
+- Тести: `internal/listener/proxyproto_test.go`, `cmd/aldap/activation_test.go` (дескриптори через dup3), `cmd/aldap/stage12b_test.go` (integration: socket activation + reload, PROXY + rate limit/IDS/masked, Virola `allow_cidrs` — падає на старому коді), `TestPolicy_AllowCIDRsKeepAccountLimits`, `TestKnownSource_AllowCIDRs`, `TestPodmanSocketActivation`, кейси masked.
+- Рішення (DECISIONS 2026-10-26): socket activation, PROXY protocol (недовірений пір без заголовка обслуговується під своєю IP), фікс `allow_cidrs`, known sources. OPEN: перевірка на хості з Podman/systemd (BLOCKED), власний CA у Virola.
+- Окремим комітом `chore: remove committed binary` прибрано `aldap` з кореня, `/aldap` і `/aldapctl` у `.gitignore`.
+- Зупинився: після коміту `stage-12b: socket activation, PROXY protocol` у гілці `claude/inspiring-babbage-m0xrei`, PR у main.
+- Далі: Stage 13 — Samba AD, DHI, реліз.
+
 ## Stage 12 — Hot reload, graceful, служба (завершено 2026-10-25)
 - Зроблено: `internal/listener` — покоління конфігурації (`Server.Reconfigure`, лічильник запитів у польоті на покоління, `Check`), «kick» з'єднання після поточного запиту (Notice of Disconnection), новий drain (idle — одразу, busy — після запиту, cut лише на `shutdown_timeout`), лімітери з `SetLimit`. `cmd/aldap/sockets.go` — пул сокетів за адресою поза поколіннями; `daemon.takeOver` (open нових → handOver фонових циклів → Reconfigure/serve/drain → retire старих upstream/shadow після їхніх запитів). sd_notify, `aldap service` (kardianos/service v1.3.0, Event Log, вбудований `deploy/aldap.service`), `409 config_read_only`.
 - Podman (доручення власника): `build.sh --podman` (`--format docker`), Quadlet `deploy/podman/aldap.container`, `docs/podman.md` (pasta без custom network; slirp4netns лише Podman < 6), детектор `[ids.client_ip_masked]` → `insecure_config{what=client_ip_masked}` + WARN.
 - Тести: `cmd/aldap/stage12_test.go` (КП: reload під час paged search; add/remove listen; стан rate limit; drain з активним запитом), `internal/listener/reload_test.go`, `internal/ids/masked_test.go`, `cmd/aldap/service_test.go` (fake service manager, sd_notify, Event Log tee, unit/Quadlet sync). Покриття: `ids` ≈96%.
 - Рішення (DECISIONS 2026-10-25): hot reload, retire, paged search, drain, лімітери, sd_notify, `aldap service`, masked IPs, read-only config, Podman. OPEN: `aldapctl stop`; перевірка Podman на реальному хості (BLOCKED).
-- Спостережено: `deploy/aldap.service` був `Type=notify` без sd_notify — виправлено в коді; `LoadCredential=` з відсутнім файлом не дасть стартувати юніту (задокументовано). Бінарник `aldap` у корені досі закомічений.
+- Спостережено: `deploy/aldap.service` був `Type=notify` без sd_notify — виправлено в коді; `LoadCredential=` з відсутнім файлом не дасть стартувати юніту (задокументовано). Бінарник `aldap` у корені досі закомічений (прибрано у Stage 12b).
 - Зупинився: після коміту `stage-12: hot reload, graceful shutdown, service` у гілці `claude/stage-12-rootless-podman-dldg1m`, PR у main.
 - Далі: Stage 13 — Samba AD, DHI, реліз.
 

@@ -1,0 +1,34 @@
+# ALDAP — systemd socket for profile "virola" (socket activation,
+# docs/podman.md). Pair: aldap-virola.container (Quadlet). Use it INSTEAD of
+# aldap.container, not next to it.
+#
+# systemd (not the container) binds the socket on the host, so clients keep
+# their real source address whatever the container network is, and the
+# traffic does not pass through pasta. ALDAP serves it with
+#   [profile.virola]
+#   listen = ["systemd:virola"]      # = FileDescriptorName= below
+#
+# Install as the user that runs ALDAP:
+#   cp deploy/podman/aldap-virola.socket ~/.config/systemd/user/
+#   cp deploy/podman/aldap-virola.container ~/.config/containers/systemd/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now aldap-virola.socket
+#   loginctl enable-linger "$USER"
+# A user manager can bind ports from net.ipv4.ip_unprivileged_port_start
+# (default 1024) up; for 636 see the system service variant in docs/podman.md.
+
+[Unit]
+Description=ALDAP LDAPS socket, profile virola
+Documentation=https://github.com/alstdev/aldap/blob/main/docs/podman.md
+
+[Socket]
+# Every ListenStream= of this unit is passed under the same name.
+ListenStream=6360
+FileDescriptorName=virola
+# One service for all connections (ALDAP accepts them itself).
+Accept=no
+# Keep accepting into the backlog while ALDAP restarts or reloads.
+Backlog=256
+
+[Install]
+WantedBy=sockets.target

@@ -235,7 +235,10 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `upstream.<name>.timeouts.bind` | duration | `5s` | Bind timeout. |
 | `upstream.<name>.timeouts.search` | duration | `30s` | Search timeout. |
 | `profile.<name>` | table |  | Client-facing profiles, one table per name. |
-| `profile.<name>.listen` | []string | `[]` | Listen addresses, e.g. ":636" or "10.0.0.5:636". |
+| `profile.<name>.listen` | []string | `[]` | Listen addresses, e.g. ":636" or "10.0.0.5:636", or "systemd:<name>" for the sockets systemd passes with that FileDescriptorName= (socket activation). |
+| `profile.<name>.proxy_protocol` | table |  | PROXY protocol v1/v2 header from a trusted proxy in front of the listeners (client address from the header). |
+| `profile.<name>.proxy_protocol.enabled` | bool | `false` | Accept a PROXY protocol v1 or v2 header from trusted_cidrs; the header's source address becomes the client address. |
+| `profile.<name>.proxy_protocol.trusted_cidrs` | []string | `[]` | Proxy addresses whose header is accepted (required when enabled). A connection from elsewhere that sends a header is closed and reported as insecure_config. |
 | `profile.<name>.transport` | string | `"ldaps"` | ldaps, ldap, starttls or ldap+starttls (plain allowed, StartTLS optional). |
 | `profile.<name>.starttls_required` | bool | `false` | Reject binds without TLS with confidentialityRequired. |
 | `profile.<name>.tls` | table |  | Overrides of [tls] for this profile. |

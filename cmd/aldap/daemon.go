@@ -138,6 +138,9 @@ type daemonOptions struct {
 	SystemLog systemLogger
 	// Ready is called once the listeners and the API serve (service start).
 	Ready func()
+	// Inherited are the sockets passed by systemd (socket activation);
+	// serve takes them over from the environment once per process.
+	Inherited *inheritedSockets
 }
 
 // daemon is one built configuration: upstreams, profiles and listeners.
@@ -361,10 +364,9 @@ func (d *daemon) buildProfile(name string, pcfg *config.Profile) (*servedProfile
 		dopts.Taps = append(dopts.Taps, sp.rec.rec)
 	}
 	sp.dir = vdir.New(rules, up, dopts)
-	lcfg := listener.Config{
-		Profile: name, Transport: pcfg.Transport, StartTLSRequired: pcfg.StartTLSRequired, Handler: sp.dir, Fingerprints: d.state.ids, Metrics: d.state.metrics,
-		MaxRequestBytes: int64(pcfg.Limits.MaxRequestBytes), IdleTimeout: pcfg.Limits.IdleTimeout.D(),
-		PerIP: d.state.ipLimiter(name), Global: d.state.global, Logger: d.log, Events: d.events,
+	lcfg, err := d.listenerConfig(name, pcfg, sp.dir)
+	if err != nil {
+		return nil, err
 	}
 	if pcfg.Transport != listener.TransportLDAP {
 		sp.tls, err = d.buildTLS(name, pcfg)
@@ -378,6 +380,22 @@ func (d *daemon) buildProfile(name string, pcfg *config.Profile) (*servedProfile
 	}
 	sp.lcfg = lcfg
 	return sp, nil
+}
+
+// listenerConfig is the listener configuration of a profile, without TLS.
+func (d *daemon) listenerConfig(name string, pcfg *config.Profile, h listener.Handler) (listener.Config, error) {
+	lcfg := listener.Config{
+		Profile: name, Transport: pcfg.Transport, StartTLSRequired: pcfg.StartTLSRequired, Handler: h, Fingerprints: d.state.ids, Metrics: d.state.metrics,
+		MaxRequestBytes: int64(pcfg.Limits.MaxRequestBytes), IdleTimeout: pcfg.Limits.IdleTimeout.D(),
+		PerIP: d.state.ipLimiter(name), Global: d.state.global, Logger: d.log, Events: d.events,
+	}
+	if pp := pcfg.ProxyProtocol; pp.Enabled {
+		var err error
+		if lcfg.ProxyProtocol, err = listener.ParseProxyTrusted(pp.TrustedCIDRs); err != nil {
+			return lcfg, fmt.Errorf("profile.%s.%w", name, err)
+		}
+	}
+	return lcfg, nil
 }
 
 // effectiveTLS merges [profile.<name>.tls] over [tls].
@@ -427,7 +445,12 @@ func effectiveTLS(global config.TLS, o config.TLSOverride) config.TLS {
 func certSANs(listen, extra []string, hostname string) tlsutil.SANs {
 	names := make([]string, 0, len(listen)+len(extra))
 	for _, addr := range listen {
+		// A socket passed by systemd may listen anywhere: treat it like a
+		// wildcard address.
 		host, _, err := net.SplitHostPort(addr)
+		if strings.HasPrefix(addr, config.ListenSystemdPrefix) {
+			host, err = "", nil
+		}
 		if err != nil {
 			continue
 		}
@@ -467,7 +490,7 @@ func (d *daemon) buildTLS(name string, pcfg *config.Profile) (*tlsutil.Manager, 
 // start opens every listener (failing fast when one address cannot be
 // bound), starts the upstream health loops and the certificate checks.
 func (d *daemon) start(ctx context.Context) error {
-	return d.takeOver(ctx, newSocketPool(), nil)
+	return d.takeOver(ctx, newSocketPool(d.opts.Inherited), nil)
 }
 
 // takeOver makes d the serving generation on pool. With old (a reload)

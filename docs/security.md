@@ -44,7 +44,7 @@ Honeytoken hits (`honeytokenHit`) call `Guard.LockIP(ip, now+lock_duration,
 | token buckets | per IP: `ip.bind_rps`/`bind_burst`, `ip.search_rps`/`search_burst` → `busy` + `bind_blocked{rate_limited}` / `rate_limited` |
 | progressive delay | per source IP: `delay.base × 2^(n−1)` up to `delay.max` after each failure, reset on success |
 | constant-time failure | `constant_time_bind_fail`: a failed bind is padded to the p95 of the last 256 successful bind durations |
-| `allow_cidrs` | sources without any limit, delay or lock |
+| `allow_cidrs` | service sources (an application server binding for its users): no limit keyed by the address — no IP lock (also manual or honeytoken), no `ip.*` token bucket, no progressive delay, no tarpit. Account locks, the negative cache, lockdown and every detector still apply: a brute force on one account through the application server locks that account (Stage 12b) |
 | lockdown | `SetLockdown(on, source)` → `lockdown{state, source}`; while on, only `lockdown.allow_cidrs` and `lockdown.allow_accounts` are served, everything else is refused without upstream (`bind_blocked{lockdown}`, searches `unwillingToPerform`); `lockdown.auto` enters it on a high-level `attack_start`; it stays on until switched off |
 | tarpit | sources marked by the detectors (`SetAttack`) wait `tarpit.delay` before every answer while `tarpit.enabled`; at most `tarpit.max_conns` are held, further requests are refused at once; `tarpit{ip, conns}` |
 
@@ -125,7 +125,11 @@ share_percent, requests, requests_total, accounts, window}` with the address
 in `client_ip`, once per window and address. It means a NAT, proxy or
 container network (podman-compose, a custom Podman network, rootlesskit)
 replaces client addresses: per-IP limits, `allow_cidrs` and every
-source-based detector are blind (`docs/podman.md`). Tables are bounded
+source-based detector are blind (`docs/podman.md`). Requests whose address
+is known not to be masked are not counted at all (`KnownSource`, Stage 12b):
+connections on sockets inherited from systemd, addresses taken from a
+trusted PROXY protocol header (`docs/proxy-protocol.md`) and addresses in
+the profile's `ratelimit.allow_cidrs`. Tables are bounded
 (4096 sources and 64 accounts per source and bucket; further sources only
 count towards the total).
 

@@ -183,6 +183,38 @@ func checkListen(rep *Report, path, addr string) (host string, port int, ok bool
 	return h, n, true
 }
 
+// checkSystemdName validates the name of "systemd:<name>": a systemd
+// FileDescriptorName= is at most 255 printable ASCII characters without ':'
+// (systemd.socket(5)).
+func checkSystemdName(rep *Report, path, name string) {
+	ok := name != "" && len(name) <= 255
+	for _, r := range name {
+		if r <= ' ' || r > '~' || r == ':' {
+			ok = false
+		}
+	}
+	if !ok {
+		rep.errorf(path, "%q: the socket name must be 1-255 printable ASCII characters without ':' or spaces (FileDescriptorName=)", ListenSystemdPrefix+name)
+	}
+}
+
+// validateProxyProtocol requires trusted_cidrs when the header is accepted:
+// a header from anywhere would let every client choose its address.
+func validateProxyProtocol(path string, pp *ProxyProtocol, rep *Report) {
+	checkCIDRs(rep, path+".trusted_cidrs", pp.TrustedCIDRs)
+	if !pp.Enabled {
+		return
+	}
+	if len(pp.TrustedCIDRs) == 0 {
+		rep.errorf(path+".trusted_cidrs", "required when enabled = true: the PROXY header is accepted only from these proxy addresses")
+	}
+	for i, c := range pp.TrustedCIDRs {
+		if p, err := netip.ParsePrefix(c); err == nil && p.Bits() == 0 {
+			rep.errorf(fmt.Sprintf("%s.trusted_cidrs[%d]", path, i), "%q trusts every address: any client could choose its source address", c)
+		}
+	}
+}
+
 func isWildcardHost(h string) bool {
 	return h == "" || h == "0.0.0.0" || h == "::" || h == "[::]"
 }
@@ -531,8 +563,14 @@ func (v Validator) validateProfileListen(path string, p *Profile, rep *Report) {
 		rep.errorf(path+".listen", "at least one listen address is required")
 	}
 	for i, addr := range p.Listen {
-		checkListen(rep, fmt.Sprintf("%s.listen[%d]", path, i), addr)
+		lp := fmt.Sprintf("%s.listen[%d]", path, i)
+		if name, ok := strings.CutPrefix(addr, ListenSystemdPrefix); ok {
+			checkSystemdName(rep, lp, name)
+			continue
+		}
+		checkListen(rep, lp, addr)
 	}
+	validateProxyProtocol(path+".proxy_protocol", &p.ProxyProtocol, rep)
 	if !oneOf(rep, path+".transport", p.Transport, "ldaps", "ldap", "starttls", "ldap+starttls") {
 		return
 	}
@@ -749,6 +787,7 @@ func (v Validator) validateProfilesCross(c *Config, rep *Report) {
 	}
 	bases := map[string]string{}
 	ports := map[int][]listener{}
+	sockets := map[string]string{}
 	files := map[string]string{}
 	if c.Events.File.Enabled && c.Events.File.Path != "" {
 		files[filepath.Clean(c.Events.File.Path)] = "events.file.path"
@@ -773,6 +812,14 @@ func (v Validator) validateProfilesCross(c *Config, rep *Report) {
 		}
 		for i, addr := range p.Listen {
 			lp := fmt.Sprintf("%s.listen[%d]", path, i)
+			if strings.HasPrefix(addr, ListenSystemdPrefix) {
+				if other, dup := sockets[addr]; dup {
+					rep.errorf(lp, "%q is already used by %s", addr, other)
+				} else {
+					sockets[addr] = lp
+				}
+				continue
+			}
 			h, port, ok := checkListen(&Report{}, lp, addr)
 			if !ok {
 				continue

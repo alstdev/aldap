@@ -85,6 +85,9 @@ type Options struct {
 // BindObs is one bind outcome.
 type BindObs struct {
 	Profile, IP, ConnID, Account string
+	// KnownSource marks an address that cannot be masking clients (see
+	// SearchObs); the masked-address detector does not count it.
+	KnownSource bool
 	// PwHash is the salted hash of the presented password (never the password).
 	PwHash string
 	OK     bool
@@ -94,9 +97,14 @@ type BindObs struct {
 // SearchObs is one client search.
 type SearchObs struct {
 	Profile, IP, ConnID, Account string
-	Base, Scope, FilterNorm      string
-	Filter                       *ldapfilter.Filter
-	Attrs                        []string
+	// KnownSource marks an address that cannot be masking clients: the
+	// client's own (socket activation, trusted PROXY protocol header) or a
+	// service source of the profile's ratelimit.allow_cidrs. The
+	// masked-address detector does not count it; every other detector does.
+	KnownSource             bool
+	Base, Scope, FilterNorm string
+	Filter                  *ldapfilter.Filter
+	Attrs                   []string
 	// BaseKind classifies the base: rootdse, subschema, virtual, users,
 	// groups, user, group or outside.
 	BaseKind string
@@ -231,7 +239,7 @@ func (e *Engine) Bind(o BindObs) {
 		hits = s.detect(cfg, now)
 	}
 	e.mu.Unlock()
-	e.masked.observe(cfg.ClientIPMasked, o.IP, o.Account, now)
+	e.masked.observe(cfg.ClientIPMasked, o.IP, o.Account, o.KnownSource, now)
 	for _, h := range hits {
 		e.record(h, o.IP, o.Profile, now)
 	}

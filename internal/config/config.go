@@ -234,7 +234,8 @@ type Honeytoken struct {
 
 // Profile describes one client-facing profile ([profile.<name>]).
 type Profile struct {
-	Listen             []string          `toml:"listen" doc:"Listen addresses, e.g. \":636\" or \"10.0.0.5:636\"."`
+	Listen             []string          `toml:"listen" doc:"Listen addresses, e.g. \":636\" or \"10.0.0.5:636\", or \"systemd:<name>\" for the sockets systemd passes with that FileDescriptorName= (socket activation)."`
+	ProxyProtocol      ProxyProtocol     `toml:"proxy_protocol" doc:"PROXY protocol v1/v2 header from a trusted proxy in front of the listeners (client address from the header)."`
 	Transport          string            `toml:"transport" doc:"ldaps, ldap, starttls or ldap+starttls (plain allowed, StartTLS optional)."`
 	StartTLSRequired   bool              `toml:"starttls_required" doc:"Reject binds without TLS with confidentialityRequired."`
 	TLS                TLSOverride       `toml:"tls" doc:"Overrides of [tls] for this profile."`
@@ -262,6 +263,16 @@ type Profile struct {
 	Ratelimit          RatelimitPatch    `toml:"ratelimit" doc:"Overrides of [ratelimit] for this profile; unset keys inherit."`
 	Shadow             Shadow            `toml:"shadow" doc:"Shadow rules evaluated in parallel; differences are reported as shadow_diff."`
 	Record             Record            `toml:"record" doc:"Request recording for replay."`
+}
+
+// ListenSystemdPrefix marks a profile listen entry naming sockets
+// inherited from systemd (LISTEN_FDNAMES) instead of an address.
+const ListenSystemdPrefix = "systemd:"
+
+// ProxyProtocol holds [profile.<name>.proxy_protocol].
+type ProxyProtocol struct {
+	Enabled      bool     `toml:"enabled" doc:"Accept a PROXY protocol v1 or v2 header from trusted_cidrs; the header's source address becomes the client address."`
+	TrustedCIDRs []string `toml:"trusted_cidrs" doc:"Proxy addresses whose header is accepted (required when enabled). A connection from elsewhere that sends a header is closed and reported as insecure_config."`
 }
 
 // TLSOverride is a partial TLS section: unset keys inherit from [tls].

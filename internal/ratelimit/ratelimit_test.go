@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"log/slog"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -175,7 +176,7 @@ func TestPolicy_IPLockAndAllowlists(t *testing.T) {
 	}) != 1 {
 		t.Error("ip lock event")
 	}
-	// allow_accounts never lock, allow_cidrs are not limited at all.
+	// allow_accounts never lock, allow_cidrs have no IP limits.
 	for i := 0; i < 5; i++ {
 		p.PostBind("10.0.0.4", "SVC-Monitor", "h", false, "invalid_password", 0)
 	}
@@ -186,10 +187,11 @@ func TestPolicy_IPLockAndAllowlists(t *testing.T) {
 		t.Errorf("allow_accounts bypassed the negative cache: %+v", v)
 	}
 	for i := 0; i < 50; i++ {
-		if w := p.PostBind("192.168.1.9", "x", "h", false, "invalid_password", 0); w != 0 {
+		h := "h" + strconv.Itoa(i)
+		if w := p.PostBind("192.168.1.9", "x", h, false, "invalid_password", 0); w != 0 {
 			t.Fatalf("exempt ip delayed %v", w)
 		}
-		if v := p.PreBind("192.168.1.9", "x", "h"); !v.Allowed {
+		if v := p.PreBind("192.168.1.9", "x", h+"'"); !v.Allowed {
 			t.Fatalf("exempt ip blocked: %+v", v)
 		}
 	}
@@ -458,6 +460,64 @@ func TestLimiter_LockWithReason(t *testing.T) {
 	}
 	if ev.count(events.Lock, func(e events.Event) bool { return e.Data["reason"] == "ticket 42" && e.ClientIP == "10.0.0.7" }) != 1 {
 		t.Error("lock event without reason")
+	}
+	ev.check(t)
+}
+
+// TestPolicy_AllowCIDRsKeepAccountLimits: allow_cidrs (an application server
+// that binds for its users) lifts only the limits keyed by the address;
+// brute force on one account through it still locks that account.
+func TestPolicy_AllowCIDRsKeepAccountLimits(t *testing.T) {
+	const app = "10.89.0.10"
+	l, p, ev, _ := newTest(t, func(c *config.Ratelimit) {
+		c.AllowCIDRs = []string{"10.89.0.10/32"}
+		c.Account.MaxFailures = 3
+		c.IP.MaxFailures = 5
+		c.IP.BindRPS, c.IP.BindBurst = 1, 1
+		c.Tarpit.Enabled = true
+	})
+	l.SetAttack(app, true)
+	for i := 0; i < 3; i++ {
+		if v := p.PreBind(app, "victim", "h"+strconv.Itoa(i)); !v.Allowed || v.Wait != 0 {
+			t.Fatalf("attempt %d before the lock: %+v", i, v)
+		}
+		if w := p.PostBind(app, "victim", "h"+strconv.Itoa(i), false, "invalid_password", 0); w != 0 {
+			t.Fatalf("progressive delay on an exempt source: %v", w)
+		}
+	}
+	if v := p.PreBind(app, "victim", "h-next"); v.Allowed || v.Reason != ReasonAccountLocked {
+		t.Fatalf("locked account through allow_cidrs: %+v", v)
+	}
+	if v := p.PreBind(app, "victim", "h0"); v.Allowed {
+		t.Fatalf("allow_cidrs bypassed the account lock / negative cache: %+v", v)
+	}
+	if ev.count(events.Lock, func(e events.Event) bool { return e.Data["target"] == "account" && e.Account == "victim" }) != 1 {
+		t.Error("account lock event")
+	}
+	// Other accounts keep working; the address is never locked, rate
+	// limited or tarpitted although ip.max_failures and bind_rps are exceeded.
+	for i := 0; i < 10; i++ {
+		acct := "user" + strconv.Itoa(i)
+		if v := p.PreBind(app, acct, "x"+strconv.Itoa(i)); !v.Allowed || v.Wait != 0 || v.Done != nil {
+			t.Fatalf("%s: %+v", acct, v)
+		}
+		p.PostBind(app, acct, "x"+strconv.Itoa(i), i%2 == 0, "invalid_password", 0)
+	}
+	if _, locked := l.IPLocked(app, time.Now()); locked {
+		t.Error("exempt address locked")
+	}
+	if v := p.PreSearch(app, "user1"); !v.Allowed {
+		t.Errorf("search from the exempt address: %+v", v)
+	}
+	// A manual IP lock does not cut the exempt source either.
+	l.LockIP(app, time.Now().Add(time.Hour), SourceAPI)
+	if v := p.PreBind(app, "user3", "y"); !v.Allowed {
+		t.Errorf("manual ip lock applied to allow_cidrs: %+v", v)
+	}
+	// Lockdown still applies (it has its own allowlist).
+	l.SetLockdown(true, SourceAPI)
+	if v := p.PreBind(app, "user3", "y"); v.Allowed || v.Reason != ReasonLockdown {
+		t.Errorf("lockdown skipped for allow_cidrs: %+v", v)
 	}
 	ev.check(t)
 }

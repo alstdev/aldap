@@ -17,7 +17,7 @@ func (e *Engine) Search(o SearchObs) {
 	e.mu.Lock()
 	cfg := e.cfg
 	e.mu.Unlock()
-	e.masked.observe(cfg.ClientIPMasked, o.IP, o.Account, now)
+	e.masked.observe(cfg.ClientIPMasked, o.IP, o.Account, o.KnownSource, now)
 	if cfg.Recon.Enabled {
 		for _, sig := range Signatures(o) {
 			if !e.reconAllowed(o.IP, sig, now) {

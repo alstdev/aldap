@@ -15,6 +15,8 @@ type traffic struct {
 	accounts int
 	requests int
 	search   bool
+	// known: socket activation, trusted PROXY header or allow_cidrs.
+	known bool
 }
 
 func feed(e *Engine, cl *clock, srcs []traffic) {
@@ -25,9 +27,9 @@ func feed(e *Engine, cl *clock, srcs []traffic) {
 				acct = ""
 			}
 			if s.search {
-				e.Search(SearchObs{Profile: "p", IP: s.ip, ConnID: "c-1", Account: acct, Base: "ou=users,dc=x", Scope: "sub"})
+				e.Search(SearchObs{Profile: "p", IP: s.ip, ConnID: "c-1", Account: acct, KnownSource: s.known, Base: "ou=users,dc=x", Scope: "sub"})
 			} else {
-				e.Bind(BindObs{Profile: "p", IP: s.ip, ConnID: "c-1", Account: acct, OK: true})
+				e.Bind(BindObs{Profile: "p", IP: s.ip, ConnID: "c-1", Account: acct, KnownSource: s.known, OK: true})
 			}
 			cl.add(100 * time.Millisecond)
 		}
@@ -56,6 +58,9 @@ func TestClientIPMasked_Detects(t *testing.T) {
 		{"one account", nil, []traffic{{ip: "10.89.0.1", accounts: 1, requests: 60}}, ""},
 		{"anonymous only", nil, []traffic{{ip: "10.89.0.1", accounts: 0, requests: 60}}, ""},
 		{"public address", nil, []traffic{{ip: "198.51.100.7", accounts: 5, requests: 60}}, ""},
+		{"known source: application server in allow_cidrs", nil, []traffic{{ip: "10.89.0.10", accounts: 20, requests: 200, known: true}}, ""},
+		{"known source: socket activation or trusted PROXY", nil, []traffic{{ip: "10.89.0.1", accounts: 5, requests: 60, known: true}, {ip: "10.89.0.1", accounts: 5, requests: 60, known: true, search: true}}, ""},
+		{"masking gateway beside a known application server", nil, []traffic{{ip: "10.89.0.10", accounts: 20, requests: 500, known: true}, {ip: "10.89.0.1", accounts: 4, requests: 60}}, "10.89.0.1"},
 		{"loopback", nil, []traffic{{ip: "127.0.0.1", accounts: 5, requests: 60}}, ""},
 		{"ignored application server", func(m *config.ClientIPMasked) { m.IgnoreCIDRs = []string{"10.89.0.0/24"} },
 			[]traffic{{ip: "10.89.0.1", accounts: 5, requests: 60}}, ""},
@@ -130,10 +135,10 @@ func TestClientIPMasked_Bounds(t *testing.T) {
 	e, ev, cl, _ := newTest(t, func(c *config.Intrusion) { c.Spray.Enabled, c.Enumeration.Enabled = false, false })
 	cfg := config.Default().Intrusion.ClientIPMasked
 	for i := range maskedMaxIPs + 100 {
-		e.masked.observe(cfg, fmt.Sprintf("10.%d.%d.%d", i>>16&255, i>>8&255, i&255), "u", cl.now())
+		e.masked.observe(cfg, fmt.Sprintf("10.%d.%d.%d", i>>16&255, i>>8&255, i&255), "u", false, cl.now())
 	}
 	for i := range 200 {
-		e.masked.observe(cfg, "10.89.0.1", fmt.Sprintf("acct%d", i), cl.now())
+		e.masked.observe(cfg, "10.89.0.1", fmt.Sprintf("acct%d", i), false, cl.now())
 	}
 	e.masked.mu.Lock()
 	b := e.masked.buckets[len(e.masked.buckets)-1]
