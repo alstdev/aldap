@@ -1,0 +1,36 @@
+# ALDAP quick start (README.md): one container, read-only, no capabilities.
+# Secrets are files in ./secrets owned by uid 65532 (the image user): Compose
+# mounts them as they are on the host (uid/mode apply in Swarm only).
+name: aldap-quickstart
+services:
+  aldap:
+    image: ${ALDAP_IMAGE:-ghcr.io/alstdev/aldap:latest}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /run/aldap:size=8m,uid=65532,gid=65532,mode=0700
+    ports:
+      - "636:636"
+    volumes:
+      # The directory, read-only: editors that save by rename keep working.
+      - ./config:/etc/aldap:ro
+      - aldap-state:/var/lib/aldap          # built-in CA and certificates
+    environment:
+      ALDAP_CONFIG: /etc/aldap/aldap.toml
+    secrets: [ad_pass, virola_bind]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/aldap", "check", "--quick"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  aldap-state:
+
+secrets:
+  ad_pass:     { file: ./secrets/ad_pass }
+  virola_bind: { file: ./secrets/virola_bind }

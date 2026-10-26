@@ -1,0 +1,40 @@
+name: samba
+
+# Samba AD integration (make integration-samba, docs/samba.md): nightly, on
+# pull requests that touch the bench or its tests, before a release (called
+# by release.yml) and by hand. Capped at 15 minutes of Actions time.
+on:
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    paths:
+      - deploy/samba-dc/**
+      - cmd/aldap/samba_test.go
+      - .github/workflows/samba.yml
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: auto
+
+jobs:
+  samba:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with: { go-version-file: go.mod, cache: true }
+      - run: make integration-samba
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: samba-logs
+          # Passwords stay in deploy/samba-dc/secrets/, which is not uploaded.
+          path: |
+            artifacts/samba.log
+            artifacts/samba.json
+            artifacts/junit-samba.xml

@@ -68,7 +68,9 @@ Secret=virola_bind,type=mount,uid=65532,gid=65532,mode=0400
 Environment=ALDAP_CONFIG=/etc/aldap/aldap.toml
 # SIGTERM starts the graceful drain (SPEC §5.3); give it server.shutdown_timeout
 # (default 30s) plus a margin before podman kills the process.
-StopTimeout=40
+# PodmanArgs, not StopTimeout=: Quadlet of Podman 4.x rejects that key
+# ("unsupported key"); --stop-timeout works on Podman 4 and 5.
+PodmanArgs=--stop-timeout=40
 # Optional: Notify=true lets ALDAP report READY=1 itself (sd_notify).
 
 [Service]

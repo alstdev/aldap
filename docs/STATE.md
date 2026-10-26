@@ -2,6 +2,16 @@
 
 Оновлюється наприкінці кожного етапу (5–10 рядків). Читати першим після `CLAUDE.md`.
 
+## Stage 13 — Samba AD, DHI, реліз (завершено 2026-10-26)
+- Зроблено: `deploy/samba-dc/` (2 незалежні DC, LDIF + `provision.py`, паролі й CA генерує `init.sh` у git-ignored `secrets/`, CA → `testdata/samba-ca.pem`), `make integration-samba`, `cmd/aldap/samba_test.go` (8 тестів: Virola, bind-форми, lock + `badPwdCount`=3, негативний кеш, recon, honeytoken, PROXY, failover, webhook HMAC, SSE, `check --online`) — локально зелено за ~15 с; `.github/workflows/samba.yml` (≤ 15 хв).
+- Реліз: `.github/workflows/release.yml` (бінарники 3 платформ, SHA256SUMS + keyless cosign, SBOM, DHI-образ у GHCR, notes з CHANGELOG; dry run на PR/dispatch), `scripts/release-notes.sh`, `docs/release.md`. DHI-теги закріплено за публічним build-log DHI (`TestDHITagsPinned`).
+- Виправлено: власник `/var/lib/aldap`, `/run/aldap` в образах (65532); `build.sh` підписує digest після push; Quadlet `StopTimeout=` → `PodmanArgs=--stop-timeout=40` (знайдено `quadlet -dryrun` Podman 4.9.3).
+- Quick start: `deploy/quickstart/`, `deploy/virola-stack/`, README з 3 варіантами; Compose і Virola-стек (зі стенд-ін клієнтом) перевірено з чистої копії проти Samba-стенду; `docs/limitations.md`; у DECISIONS 0 OPEN.
+- BLOCKED: образ Virola Server (virola.io недоступний), Podman під systemd, pull з dhi.io, локальні `make vuln`/`make licenses` (працюють у CI).
+- Середовище: Docker daemon запускається вручну (`dockerd`), Docker Hub дає 429 → образи з `mirror.gcr.io`; apt лише через `archive.ubuntu.com` по HTTPS з CA проксі (build secret `apt_ca`).
+- Зупинився: після коміту `stage-13: Samba AD, DHI, release` у гілці `claude/kind-allen-10out7`, PR у main.
+- Далі: власник — секрети `DHI_USERNAME`/`DHI_TOKEN`, перейменувати `[Unreleased]` → `[X.Y.Z]`, тег `vX.Y.Z`; ручні чеклісти Virola/Podman/Windows (`docs/limitations.md`).
+
 ## Stage 12b — Socket activation, PROXY protocol, Virola (завершено 2026-10-26)
 - Зроблено: `cmd/aldap/activation.go` — успадковані сокети systemd (`LISTEN_PID/FDS/FDNAMES`, лише TCP, змінні прибираються з env), належать процесу: accept-горутина на сокет + «лізинг» для `listener.Server`; reload їх не закриває, навіть коли прибирає `systemd:<name>`. `socketPool` — запис = кілька сокетів (`lns`), `DirectSource` для успадкованих. `internal/listener/proxyproto.go` — PROXY v1/v2 (власний парсер), читання заголовка поза accept-циклом у межах first-packet timeout, per-IP ліміт за IP із заголовка, `insecure_config{proxy_protocol_untrusted}`. Конфіг: `profile.<name>.proxy_protocol`, `systemd:<name>` у `listen` (валідація імені, унікальність, `trusted_cidrs` обов'язковий, /0 заборонено).
 - Виправлено баг: `ratelimit.Policy.PreBind` для `allow_cidrs` пропускав lock акаунта і негативний кеш; тепер звільняє лише від IP-лімітів. `ids` — `KnownSource` (успадкований сокет, довірений PROXY, `allow_cidrs` профілю) не рахується детектором `client_ip_masked`.

@@ -19,3 +19,10 @@
 .vscode/
 *.swp
 .DS_Store
+
+# Samba test bench (deploy/samba-dc/init.sh)
+/deploy/samba-dc/secrets/
+/testdata/samba-ca.pem
+/deploy/quickstart/secrets/
+/deploy/virola-stack/secrets/
+/deploy/virola-stack/trust/

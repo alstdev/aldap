@@ -8,6 +8,7 @@
 #   ./build.sh --podman [--dhi|--plain]  build the image with (rootless) podman instead of docker;
 #                          --dhi when no image target is given (requires: podman login dhi.io)
 # Env overrides: DHI_GOLANG_TAG, DHI_STATIC_TAG, IMAGE, VERSION, NO_SIGN=1, PUSH=1,
+#   COSIGN_KEY (key-based signature) or COSIGN_KEYLESS=1 (Sigstore OIDC, CI), both after PUSH=1,
 #   ATTEST=1 (BuildKit provenance/SBOM attestations; needs a docker-container
 #   builder or the containerd image store, so it is off by default; docker only)
 set -euo pipefail
@@ -18,11 +19,13 @@ COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo none)"
 DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 GO_MINOR="$(sed -n 's/^go \([0-9]*\.[0-9]*\).*/\1/p' go.mod 2>/dev/null || echo 1.26)"
 
-# DHI tags: verify current tags in https://hub.docker.com/hardened-images/catalog/ (golang, static)
-DHI_GOLANG_TAG="${DHI_GOLANG_TAG:-${GO_MINOR}-debian13-dev}"
-DHI_STATIC_TAG="${DHI_STATIC_TAG:-latest}"
+# DHI tags, pinned (docs/DECISIONS.md 2026-10-26 «DHI tags»): the golang patch release is
+# the go.mod toolchain; keep both in step with the Dockerfile ARGs (TestDHITagsPinned).
+# Catalog: https://hub.docker.com/hardened-images/catalog/ (golang, static)
+DHI_GOLANG_TAG="${DHI_GOLANG_TAG:-1.26.10-debian13-dev}"
+DHI_STATIC_TAG="${DHI_STATIC_TAG:-20250419-debian13}"
 
-usage() { sed -n '2,10p' "$0"; exit 1; }
+usage() { sed -n '2,13p' "$0"; exit 1; }
 
 log() { printf '\033[1;34m[build]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[build] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -45,7 +48,7 @@ build_bins() {
   done
 }
 
-sbom_and_sign() {
+sbom() {
   local target="$1"
   if command -v syft >/dev/null 2>&1; then
     log "SBOM (CycloneDX) for ${target}"
@@ -57,11 +60,27 @@ sbom_and_sign() {
   else
     log "syft not found, SBOM skipped"
   fi
-  if [ "${NO_SIGN:-0}" != "1" ] && command -v cosign >/dev/null 2>&1 && [ -n "${COSIGN_KEY:-}" ]; then
-    log "cosign sign ${target}"
-    cosign sign --key "$COSIGN_KEY" --yes "$target"
+}
+
+# sign signs the pushed image by digest (a tag can move; a local image has no
+# registry signature to attach to).
+sign() {
+  local target="$1"
+  if [ "${NO_SIGN:-0}" = "1" ] || ! command -v cosign >/dev/null 2>&1; then
+    log "signing skipped (NO_SIGN=1 or no cosign)"
+    return
+  fi
+  local ref
+  ref="$("$ENGINE" image inspect --format '{{index .RepoDigests 0}}' "$target" 2>/dev/null || true)"
+  [ -n "$ref" ] || die "no registry digest for ${target}: signing needs PUSH=1"
+  if [ -n "${COSIGN_KEY:-}" ]; then
+    log "cosign sign --key ${ref}"
+    cosign sign --key "$COSIGN_KEY" --yes "$ref"
+  elif [ "${COSIGN_KEYLESS:-0}" = "1" ]; then
+    log "cosign sign (keyless) ${ref}"
+    cosign sign --yes "$ref"
   else
-    log "signing skipped (NO_SIGN=1, no cosign, or no COSIGN_KEY)"
+    log "signing skipped (neither COSIGN_KEY nor COSIGN_KEYLESS=1)"
   fi
 }
 
@@ -104,10 +123,16 @@ docker_build() {
   if [ "$target" = "dhi" ]; then
     "$ENGINE" tag "$tag" "${IMAGE}:latest"
   fi
-  sbom_and_sign "$tag"
+  sbom "$tag"
   if [ "${PUSH:-0}" = "1" ]; then
     log "${ENGINE} push ${tag}"
     "$ENGINE" push "$tag"
+    if [ "$target" = "dhi" ]; then
+      "$ENGINE" push "${IMAGE}:latest"
+    fi
+    sign "$tag"
+  else
+    log "not pushed (PUSH=1 pushes and signs)"
   fi
 }
 

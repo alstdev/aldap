@@ -43,7 +43,9 @@ Secret=ad_pass,type=mount,uid=65532,gid=65532,mode=0400
 Secret=virola_bind,type=mount,uid=65532,gid=65532,mode=0400
 
 Environment=ALDAP_CONFIG=/etc/aldap/aldap.toml
-StopTimeout=40
+# PodmanArgs, not StopTimeout=: Quadlet of Podman 4.x rejects that key
+# ("unsupported key"); --stop-timeout works on Podman 4 and 5.
+PodmanArgs=--stop-timeout=40
 # Optional: Notify=true lets ALDAP report READY=1 itself (sd_notify).
 
 [Service]

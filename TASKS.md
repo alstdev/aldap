@@ -130,10 +130,11 @@
 
 ## Stage 13 — Samba AD інтеграція, DHI, реліз
 Читати: SPEC §10, §13, §14; TESTING «Samba AD стенд», «CI», «Артефакти тестів».
-- [ ] `deploy/samba-dc/`: compose з Samba AD DC, LDIF-провізія (2 OU, CN=Users, 20 користувачів, 5 комп'ютерів, 3 групи з вкладеністю, 2 вимкнені акаунти), `make integration-samba` (`integration_samba` tag), другий DC для failover (або 2 контейнери Samba join — якщо нестабільно, емулювати failover через iptables/зупинку контейнера і документувати).
-- [ ] Повний прогін КП §13 SPEC проти Samba.
-- [ ] `build.sh --dhi` з перевіркою логіну, SBOM (syft/cyclonedx-gomod), cosign-підпис (ключ з CI secret, локально — `--no-sign`), GitHub Release workflow з артефактами linux/windows + образ.
-- [ ] `docs/`: README (compose за 5 хв), virola.md, windows.md, security.md, api.md, events.md.
+- [x] `deploy/samba-dc/`: compose з Samba AD DC, LDIF-провізія (2 OU, CN=Users, 20 користувачів, 5 комп'ютерів, 3 групи з вкладеністю, 2 вимкнені акаунти), `make integration-samba` (`integration_samba` tag), другий DC для failover (`dc2` — незалежний DC з тим самим LDIF, не join: LIMITATION у DECISIONS, `docs/samba.md`). Паролі генерує `init.sh` у `deploy/samba-dc/secrets/` (git-ignored), LDAPS з власним CA, експорт у `testdata/samba-ca.pem`.
+- [x] Повний прогін КП §13 SPEC проти Samba (`cmd/aldap/samba_test.go`): Virola-сценарій, bind UPN/sAMAccountName/DOMAIN\user/віртуальний DN, lock після 3 невдач без lockout в AD (`badPwdCount` = 3), негативний кеш, honeytoken, recon, PROXY protocol, failover dc1 → dc2 → dc1, webhook HMAC, SSE, `check --online`. CI: `.github/workflows/samba.yml` (nightly, ≤ 15 хв).
+- [x] `build.sh --dhi` з перевіркою логіну, SBOM (syft), cosign-підпис (ключ або keyless після push, локально — `NO_SIGN=1`), DHI-теги закріплено (`TestDHITagsPinned`), GitHub Release workflow `.github/workflows/release.yml` з артефактами linux/windows + образ DHI у GHCR. BLOCKED: pull DHI-образів у середовищі агента (`dhi.io` недоступний) — перевіряє CI з `DHI_USERNAME`/`DHI_TOKEN`.
+- [x] `docs/`: README (швидкий старт: Docker Compose, rootless Podman Quadlet, Virola в одному стеку), virola.md, windows.md, security.md, api.md, events.md, samba.md, release.md, limitations.md. Перевірено з нуля: Compose (образ `plain` з цього Dockerfile, Samba-стенд), Virola-стек зі стенд-ін клієнтом, Quadlet — `quadlet -dryrun` (Podman 4.9.3). BLOCKED: образ Virola Server (virola.io недоступний), Podman під systemd (немає systemd).
+- [x] Усі OPEN у `docs/DECISIONS.md` закрито (CLOSED/DECIDED) або переведено в LIMITATION (`docs/limitations.md`).
 **КП:** `make integration-samba` зелений; release workflow проходить у dry-run; README-сценарій відтворюється з нуля на чистій машині з Docker.
 
 ---

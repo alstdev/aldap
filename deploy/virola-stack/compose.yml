@@ -1,0 +1,67 @@
+# Virola and ALDAP in one stack (README.md, docs/virola.md).
+#  - Virola connects to ldaps://aldap:636 on the network "stack"; that port is
+#    not published on the host.
+#  - Virola has a fixed address, the profile's ratelimit.allow_cidrs.
+#  - The ALDAP certificate carries "aldap" (tls.san); Virola trusts the ALDAP CA
+#    (./trust/aldap-ca.crt, copied out after the first start of aldap).
+# Secrets: files in ./secrets owned by uid 65532 (Compose ignores uid/mode
+# outside Swarm).
+name: aldap-virola
+services:
+  aldap:
+    image: ${ALDAP_IMAGE:-ghcr.io/alstdev/aldap:latest}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /run/aldap:size=8m,uid=65532,gid=65532,mode=0700
+    # no "ports:": the virola profile is reachable inside the stack only
+    networks:
+      stack:
+        ipv4_address: 10.89.10.10
+    volumes:
+      - ./config:/etc/aldap:ro
+      - aldap-state:/var/lib/aldap
+    environment:
+      ALDAP_CONFIG: /etc/aldap/aldap.toml
+    secrets: [ad_pass, virola_bind]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/aldap", "check", "--quick"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  virola:
+    # The Virola server image, loaded as Virola's Docker guide describes
+    # (https://virola.io/how-to/setup/server/docker/linux). Its LDAP settings
+    # are made in Virola itself: docs/virola.md, "Virola client checklist".
+    image: ${VIROLA_IMAGE:-providesupport/virola-server:latest}
+    restart: unless-stopped
+    depends_on:
+      aldap: { condition: service_healthy }
+    networks:
+      stack:
+        ipv4_address: 10.89.10.20       # = ratelimit.allow_cidrs in config/aldap.toml
+    ports:
+      - "8888:7777/tcp"
+      - "8888:7777/udp"
+    volumes:
+      # The ALDAP CA for Virola's LDAPS trust; whether Virola reads the OS
+      # store or its own setting is not verified (docs/virola.md).
+      - ./trust/aldap-ca.crt:/usr/local/share/ca-certificates/aldap-ca.crt:ro
+
+networks:
+  stack:
+    ipam:
+      config:
+        - subnet: 10.89.10.0/24
+
+volumes:
+  aldap-state:
+
+secrets:
+  ad_pass:     { file: ./secrets/ad_pass }
+  virola_bind: { file: ./secrets/virola_bind }

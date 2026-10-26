@@ -228,6 +228,12 @@ sudo systemctl enable --now aldap-virola.socket
 
 ## The Quadlet unit (`deploy/podman/aldap.container`)
 
+Both `.container` files are converted without errors by `quadlet -dryrun -user` of Podman 4.9.3
+(Ubuntu 24.04), checked in Stage 13. That check found `StopTimeout=`, which Quadlet of Podman 4.x
+rejects (*"unsupported key 'StopTimeout' in group 'Container'"*, see also
+[containers/podman#21134][st]); the units use `PodmanArgs=--stop-timeout=40`, which Podman 4 and
+5 accept. A run under systemd is not verified (`docs/limitations.md`).
+
 Keys as listed in podman-container.unit(5) ([podman-systemd.unit][quadlet]); the unit goes into
 `~/.config/containers/systemd/` and becomes `aldap.service` after `systemctl --user daemon-reload`.
 
@@ -242,7 +248,7 @@ Keys as listed in podman-container.unit(5) ([podman-systemd.unit][quadlet]); the
 | `Volume=%h/.config/aldap:/etc/aldap:ro,Z` | Configuration **directory**, read-only (below). |
 | `Volume=aldap-state:/var/lib/aldap:U,Z` | Built-in CA, certificates, event files; `U` gives the volume to the container user. |
 | `Secret=<name>,type=mount,uid=65532,gid=65532,mode=0400` | Podman secrets at `/run/secrets/<name>`, readable by ALDAP only. |
-| `StopTimeout=40`, `TimeoutStopSec=45` | `SIGTERM` starts the graceful drain (`server.shutdown_timeout`, default 30s); podman must not kill earlier. |
+| `PodmanArgs=--stop-timeout=40`, `TimeoutStopSec=45` | `SIGTERM` starts the graceful drain (`server.shutdown_timeout`, default 30s); podman must not kill earlier. |
 | `ExecReload=podman kill --signal HUP aldap` | `systemctl --user reload aldap` = hot reload. |
 
 `aldapctl` inside the container: `podman exec -it aldap /usr/local/bin/aldapctl status` (IPC socket, no token).
@@ -287,6 +293,7 @@ podman exec aldap /usr/local/bin/aldapctl status
 Connect once from another host and check that `bind_ok`/`search` events carry that host's address,
 not a `10.x`/`fd00::` container address.
 
+[st]: https://github.com/containers/podman/issues/21134
 [erik]: https://github.com/eriksjolund/podman-networking-docs
 [network]: https://github.com/containers/podman/blob/main/docs/source/markdown/options/network.md
 [publish]: https://github.com/containers/podman/blob/main/docs/source/markdown/options/publish.md
