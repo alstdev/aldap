@@ -397,6 +397,18 @@ func (i *Intrusion) validate(path string, rep *Report) {
 	if i.Honeytoken.Enabled {
 		positive(rep, path+".honeytoken.lock_duration", i.Honeytoken.LockDuration)
 	}
+	if m := i.ClientIPMasked; m.Enabled {
+		p := path + ".client_ip_masked"
+		if m.Window.D() < time.Minute {
+			rep.errorf(p+".window", "must be at least 1m, got %s", m.Window)
+		}
+		atLeast(rep, p+".min_requests", m.MinRequests, 1)
+		atLeast(rep, p+".min_accounts", m.MinAccounts, 2)
+		if m.MinSharePercent < 1 || m.MinSharePercent > 100 {
+			rep.errorf(p+".min_share_percent", "must be 1..100, got %d", m.MinSharePercent)
+		}
+	}
+	checkCIDRs(rep, path+".client_ip_masked.ignore_cidrs", i.ClientIPMasked.IgnoreCIDRs)
 }
 
 // Validate checks the upstream on its own.

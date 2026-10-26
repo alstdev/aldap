@@ -44,10 +44,11 @@ type Bound struct {
 
 // Conn is the per-connection state a Handler sees.
 type Conn struct {
-	id      string
-	remote  net.Addr
-	profile string
-	opened  time.Time
+	id        string
+	remote    net.Addr
+	profile   string
+	transport string
+	opened    time.Time
 
 	nc     net.Conn
 	rd     *bufio.Reader
@@ -62,6 +63,9 @@ type Conn struct {
 	fp    string
 
 	cancel context.CancelFunc
+	// kicked holds the Notice of Disconnection text once the connection
+	// must end after its current request (shutdown, reconfigured listener).
+	kicked atomic.Pointer[string]
 
 	// Session counters (SPEC §6 session_summary).
 	bindsOK, bindsFail, searches, results, denied atomic.Int64
@@ -277,6 +281,36 @@ func (c *Conn) close() {
 	}
 }
 
+// kick ends the connection once its current request is answered: the
+// request loop sees the mark before its next read, and a read already
+// waiting is woken by an expired deadline. The loop sets its own deadline
+// before it checks the mark, so either it sees the mark or this deadline
+// lands after its own. The deadline is set on its own goroutine: the
+// transport is guarded by the write lock, which a slow response may hold
+// for up to the write timeout, and a drain must not wait for it per
+// connection.
+func (c *Conn) kick(reason string) {
+	if !c.kicked.CompareAndSwap(nil, &reason) {
+		return
+	}
+	go func() {
+		c.wmu.Lock()
+		nc := c.nc
+		c.wmu.Unlock()
+		if err := nc.SetReadDeadline(time.Now()); err != nil && !errors.Is(err, net.ErrClosed) {
+			slog.Default().Debug("set deadline failed", "conn_id", c.id, "err", err)
+		}
+	}()
+}
+
+// kickReason returns the notice text of a kicked connection ("" = not kicked).
+func (c *Conn) kickReason() string {
+	if r := c.kicked.Load(); r != nil {
+		return *r
+	}
+	return ""
+}
+
 // entryWriter streams SearchResultEntry messages for one search.
 type entryWriter struct {
 	c         *Conn
@@ -305,75 +339,114 @@ type Handler interface {
 	Search(ctx context.Context, c *Conn, req *SearchRequest, w EntryWriter) Result
 }
 
-// serve runs the request loop of one connection until it ends.
+// serve runs the request loop of one connection until it ends. Every
+// request runs under the configuration current when it was read.
 func (s *Server) serve(ctx context.Context, c *Conn) {
 	defer c.close()
 	defer func() {
 		if r := recover(); r != nil {
 			// Never print the recovered value: it may hold a request with a password.
-			s.log.Error("panic while serving connection", "conn_id", c.id, "client_ip", c.ClientIP(), "panic", fmt.Sprintf("%T", r))
+			s.current().log.Error("panic while serving connection", "conn_id", c.id, "client_ip", c.ClientIP(), "panic", fmt.Sprintf("%T", r))
 		}
 	}()
 	ctx, c.cancel = context.WithCancel(ctx)
 	defer c.cancel()
-	timeout := s.cfg.FirstPacketTimeout
+	first := true
 	for {
+		g := s.current()
+		timeout := g.cfg.IdleTimeout
+		if first {
+			timeout = g.cfg.FirstPacketTimeout
+		}
+		var deadline time.Time
 		if timeout > 0 {
-			if err := c.nc.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			deadline = time.Now().Add(timeout)
+		}
+		c.wmu.Lock()
+		err := c.nc.SetReadDeadline(deadline)
+		c.wmu.Unlock()
+		if err != nil {
+			return
+		}
+		if reason := c.kickReason(); reason != "" {
+			g.disconnect(c, reason)
+			return
+		}
+		raw, err := readMessage(c.rd, g.cfg.MaxRequestBytes)
+		if err != nil {
+			if reason := c.kickReason(); reason != "" {
+				g.disconnect(c, reason)
 				return
 			}
-		}
-		raw, err := readMessage(c.rd, s.cfg.MaxRequestBytes)
-		if err != nil {
-			s.readFailed(c, err)
+			g.readFailed(c, err)
 			return
 		}
 		c.bytesIn.Add(int64(len(raw)))
-		first := timeout == s.cfg.FirstPacketTimeout && c.Fingerprint() == ""
-		timeout = s.cfg.IdleTimeout
-		msg, err := parseMessage(raw)
-		if err != nil {
-			s.log.Debug("malformed request", "conn_id", c.id, "err", err)
-			c.writeQuietly(s.log, encodeNotice(ldap.LDAPResultProtocolError, "malformed request"), s.cfg.WriteTimeout)
+		if !s.handle(ctx, c, raw, first) {
 			return
 		}
-		if first {
-			fp := c.firstPacketFingerprint(msg, len(raw))
-			if s.cfg.Fingerprints != nil {
-				s.cfg.Fingerprints.Fingerprint(c.profile, c.ClientIP(), c.id, fp)
-			}
-		}
-		if !s.dispatch(ctx, c, msg) {
-			return
+		first = false
+	}
+}
+
+// handle parses and dispatches one request under the current
+// configuration; it returns false when the connection must end.
+func (s *Server) handle(ctx context.Context, c *Conn, raw []byte, first bool) bool {
+	g := s.acquire()
+	defer g.done()
+	msg, err := parseMessage(raw)
+	if err != nil {
+		g.log.Debug("malformed request", "conn_id", c.id, "err", err)
+		c.writeQuietly(g.log, encodeNotice(ldap.LDAPResultProtocolError, "malformed request"), g.cfg.WriteTimeout)
+		return false
+	}
+	if first {
+		fp := c.firstPacketFingerprint(msg, len(raw))
+		if g.cfg.Fingerprints != nil {
+			g.cfg.Fingerprints.Fingerprint(c.profile, c.ClientIP(), c.id, fp)
 		}
 	}
+	if c.profile != g.cfg.Profile || c.transport != g.cfg.Transport {
+		// Read just before a reconfiguration that changed what this
+		// listener serves: never answer it under the new profile.
+		g.disconnect(c, reasonReconfigured)
+		return false
+	}
+	return g.dispatch(ctx, c, msg)
+}
+
+// disconnect sends the Notice of Disconnection (unavailable) of a kicked
+// connection; the caller closes it.
+func (g *generation) disconnect(c *Conn, reason string) {
+	g.log.Debug("connection ended", "conn_id", c.id, "client_ip", c.ClientIP(), "reason", reason)
+	c.writeQuietly(g.log, encodeNotice(ldap.LDAPResultUnavailable, reason), g.cfg.WriteTimeout)
 }
 
 // readFailed handles the end of the read loop: EOF is a normal close, a
 // deadline is an idle timeout, an oversized or non-LDAP message is reported.
-func (s *Server) readFailed(c *Conn, err error) {
+func (g *generation) readFailed(c *Conn, err error) {
 	switch {
 	case errors.Is(err, io.EOF), errors.Is(err, net.ErrClosed), errors.Is(err, io.ErrUnexpectedEOF):
 		return
 	case errors.Is(err, os.ErrDeadlineExceeded):
-		s.log.Debug("idle timeout", "conn_id", c.id, "client_ip", c.ClientIP())
-		c.writeQuietly(s.log, encodeNotice(ldap.LDAPResultUnavailable, "idle timeout"), s.cfg.WriteTimeout)
+		g.log.Debug("idle timeout", "conn_id", c.id, "client_ip", c.ClientIP())
+		c.writeQuietly(g.log, encodeNotice(ldap.LDAPResultUnavailable, "idle timeout"), g.cfg.WriteTimeout)
 	case errors.Is(err, ErrTooLarge):
-		s.log.Warn("request too large, closing connection", "conn_id", c.id, "client_ip", c.ClientIP(), "err", err)
+		g.log.Warn("request too large, closing connection", "conn_id", c.id, "client_ip", c.ClientIP(), "err", err)
 		ev := c.Event(events.RateLimited, events.LevelLow)
 		ev.Reason = "oversize"
-		ev.Data = map[string]any{"target": "conn", "key": c.ClientIP(), "limit": s.cfg.MaxRequestBytes}
-		s.events.Emit(ev)
-		c.writeQuietly(s.log, encodeNotice(ldap.LDAPResultProtocolError, "request too large"), s.cfg.WriteTimeout)
+		ev.Data = map[string]any{"target": "conn", "key": c.ClientIP(), "limit": g.cfg.MaxRequestBytes}
+		g.events.Emit(ev)
+		c.writeQuietly(g.log, encodeNotice(ldap.LDAPResultProtocolError, "request too large"), g.cfg.WriteTimeout)
 	case errors.Is(err, ErrNotLDAP), errors.Is(err, ErrMalformed):
-		s.log.Debug("not an LDAP message", "conn_id", c.id, "client_ip", c.ClientIP(), "err", err)
+		g.log.Debug("not an LDAP message", "conn_id", c.id, "client_ip", c.ClientIP(), "err", err)
 	default:
-		s.log.Debug("read failed", "conn_id", c.id, "err", err)
+		g.log.Debug("read failed", "conn_id", c.id, "err", err)
 	}
 }
 
 // dispatch handles one message; it returns false when the connection must end.
-func (s *Server) dispatch(ctx context.Context, c *Conn, m *message) bool {
+func (g *generation) dispatch(ctx context.Context, c *Conn, m *message) bool {
 	switch m.Op {
 	case ldap.ApplicationUnbindRequest:
 		return false
@@ -382,16 +455,16 @@ func (s *Server) dispatch(ctx context.Context, c *Conn, m *message) bool {
 		// to abandon; RFC 4511 §4.11 allows ignoring it.
 		return true
 	case ldap.ApplicationBindRequest:
-		return s.handleBind(ctx, c, m)
+		return g.handleBind(ctx, c, m)
 	case ldap.ApplicationSearchRequest:
-		return s.handleSearch(ctx, c, m)
+		return g.handleSearch(ctx, c, m)
 	case ldap.ApplicationExtendedRequest:
-		return s.handleExtended(ctx, c, m)
+		return g.handleExtended(ctx, c, m)
 	case ldap.ApplicationModifyRequest, ldap.ApplicationAddRequest, ldap.ApplicationDelRequest,
 		ldap.ApplicationModifyDNRequest, ldap.ApplicationCompareRequest:
-		return s.deny(c, m, "")
+		return g.deny(c, m, "")
 	default:
-		c.writeQuietly(s.log, encodeNotice(ldap.LDAPResultProtocolError, "unknown protocol operation"), s.cfg.WriteTimeout)
+		c.writeQuietly(g.log, encodeNotice(ldap.LDAPResultProtocolError, "unknown protocol operation"), g.cfg.WriteTimeout)
 		return false
 	}
 }
@@ -399,7 +472,7 @@ func (s *Server) dispatch(ctx context.Context, c *Conn, m *message) bool {
 // deny refuses a write, compare or extended operation (SPEC §4.2 and
 // docs/DECISIONS.md): compare → compareFalse, the rest → unwillingToPerform;
 // every refusal is an op_denied event.
-func (s *Server) deny(c *Conn, m *message, oid string) bool {
+func (g *generation) deny(c *Conn, m *message, oid string) bool {
 	app, _ := responseTag(m.Op)
 	op := deniedOp(m.Op)
 	code := ldap.LDAPResultUnwillingToPerform
@@ -412,21 +485,21 @@ func (s *Server) deny(c *Conn, m *message, oid string) bool {
 	if oid != "" {
 		ev.Data["oid"] = oid
 	}
-	s.events.Emit(ev)
-	s.log.Info("operation denied", "conn_id", c.id, "client_ip", c.ClientIP(), "op", op, "oid", oid)
+	g.events.Emit(ev)
+	g.log.Info("operation denied", "conn_id", c.id, "client_ip", c.ClientIP(), "op", op, "oid", oid)
 	var b []byte
 	if m.Op == ldap.ApplicationExtendedRequest {
 		b = encodeExtended(m.ID, Result{Code: code}, "")
 	} else {
 		b = encodeResult(m.ID, app, Result{Code: code})
 	}
-	return c.write(b, s.cfg.WriteTimeout) == nil
+	return c.write(b, g.cfg.WriteTimeout) == nil
 }
 
-func (s *Server) handleBind(ctx context.Context, c *Conn, m *message) bool {
+func (g *generation) handleBind(ctx context.Context, c *Conn, m *message) bool {
 	req, err := parseBind(m.Body)
 	if err != nil {
-		c.writeQuietly(s.log, encodeNotice(ldap.LDAPResultProtocolError, "malformed bind request"), s.cfg.WriteTimeout)
+		c.writeQuietly(g.log, encodeNotice(ldap.LDAPResultProtocolError, "malformed bind request"), g.cfg.WriteTimeout)
 		return false
 	}
 	defer wipe(req.Password)
@@ -436,19 +509,19 @@ func (s *Server) handleBind(ctx context.Context, c *Conn, m *message) bool {
 		res = Result{Code: ldap.LDAPResultProtocolError, Diagnostic: "only LDAPv3 is supported"}
 	case req.SASL:
 		res = Result{Code: ldap.LDAPResultAuthMethodNotSupported, Diagnostic: "only simple bind is supported"}
-	case s.requireTLS && !c.TLS():
+	case g.requireTLS && !c.TLS():
 		res = Result{Code: ldap.LDAPResultConfidentialityRequired, Diagnostic: "StartTLS required"}
 	default:
 		// A new bind resets the authorization state (RFC 4511 §4.2.1).
 		c.SetBound(Bound{Kind: BindAnonymous})
-		res = s.cfg.Handler.Bind(ctx, c, req.Name, req.Password)
+		res = g.cfg.Handler.Bind(ctx, c, req.Name, req.Password)
 	}
 	if res.Code == ldap.LDAPResultSuccess {
 		c.bindsOK.Add(1)
 	} else {
 		c.bindsFail.Add(1)
 	}
-	return c.write(encodeResult(m.ID, ldap.ApplicationBindResponse, res), s.cfg.WriteTimeout) == nil
+	return c.write(encodeResult(m.ID, ldap.ApplicationBindResponse, res), g.cfg.WriteTimeout) == nil
 }
 
 // wipe zeroes a password buffer (SPEC §9).
@@ -458,62 +531,62 @@ func wipe(b []byte) {
 	}
 }
 
-func (s *Server) handleSearch(ctx context.Context, c *Conn, m *message) bool {
+func (g *generation) handleSearch(ctx context.Context, c *Conn, m *message) bool {
 	req, err := parseSearch(m.Body)
 	if err != nil {
-		c.writeQuietly(s.log, encodeNotice(ldap.LDAPResultProtocolError, "malformed search request"), s.cfg.WriteTimeout)
+		c.writeQuietly(g.log, encodeNotice(ldap.LDAPResultProtocolError, "malformed search request"), g.cfg.WriteTimeout)
 		return false
 	}
 	req.Controls = m.Controls
 	var res Result
 	rootDSE := req.Base == "" && req.Scope == ScopeBase
-	if s.requireTLS && !c.TLS() && !rootDSE {
+	if g.requireTLS && !c.TLS() && !rootDSE {
 		// The root DSE stays readable so clients can discover StartTLS.
 		res = Result{Code: ldap.LDAPResultConfidentialityRequired, Diagnostic: "StartTLS required"}
 	} else {
-		w := &entryWriter{c: c, id: m.ID, typesOnly: req.TypesOnly, timeout: s.cfg.WriteTimeout}
-		res = s.cfg.Handler.Search(ctx, c, req, w)
+		w := &entryWriter{c: c, id: m.ID, typesOnly: req.TypesOnly, timeout: g.cfg.WriteTimeout}
+		res = g.cfg.Handler.Search(ctx, c, req, w)
 		c.results.Add(int64(w.n))
 	}
 	c.searches.Add(1)
-	return c.write(encodeResult(m.ID, ldap.ApplicationSearchResultDone, res), s.cfg.WriteTimeout) == nil
+	return c.write(encodeResult(m.ID, ldap.ApplicationSearchResultDone, res), g.cfg.WriteTimeout) == nil
 }
 
-func (s *Server) handleExtended(ctx context.Context, c *Conn, m *message) bool {
+func (g *generation) handleExtended(ctx context.Context, c *Conn, m *message) bool {
 	name, err := extendedName(m.Body)
 	if err != nil {
-		c.writeQuietly(s.log, encodeNotice(ldap.LDAPResultProtocolError, "malformed extended request"), s.cfg.WriteTimeout)
+		c.writeQuietly(g.log, encodeNotice(ldap.LDAPResultProtocolError, "malformed extended request"), g.cfg.WriteTimeout)
 		return false
 	}
 	if name != oidStartTLS {
-		return s.deny(c, m, name)
+		return g.deny(c, m, name)
 	}
-	return s.startTLS(ctx, c, m)
+	return g.startTLS(ctx, c, m)
 }
 
 // startTLS answers a StartTLS request and upgrades the connection (RFC 4511
 // §4.14). The response is written before the handshake; any failure ends
 // the connection — there is no clear-text fallback.
-func (s *Server) startTLS(ctx context.Context, c *Conn, m *message) bool {
+func (g *generation) startTLS(ctx context.Context, c *Conn, m *message) bool {
 	switch {
-	case !s.offersStartTLS:
-		return c.write(encodeExtended(m.ID, Result{Code: ldap.LDAPResultUnwillingToPerform, Diagnostic: "StartTLS not available on this listener"}, oidStartTLS), s.cfg.WriteTimeout) == nil
+	case !g.offersStartTLS:
+		return c.write(encodeExtended(m.ID, Result{Code: ldap.LDAPResultUnwillingToPerform, Diagnostic: "StartTLS not available on this listener"}, oidStartTLS), g.cfg.WriteTimeout) == nil
 	case c.TLS():
-		return c.write(encodeExtended(m.ID, Result{Code: ldap.LDAPResultOperationsError, Diagnostic: "TLS already established"}, oidStartTLS), s.cfg.WriteTimeout) == nil
+		return c.write(encodeExtended(m.ID, Result{Code: ldap.LDAPResultOperationsError, Diagnostic: "TLS already established"}, oidStartTLS), g.cfg.WriteTimeout) == nil
 	}
-	if err := c.write(encodeExtended(m.ID, Success, oidStartTLS), s.cfg.WriteTimeout); err != nil {
+	if err := c.write(encodeExtended(m.ID, Success, oidStartTLS), g.cfg.WriteTimeout); err != nil {
 		return false
 	}
 	if c.rd.Buffered() > 0 {
 		// Data pipelined after the StartTLS request is a protocol violation.
-		s.log.Debug("data after StartTLS request", "conn_id", c.id)
+		g.log.Debug("data after StartTLS request", "conn_id", c.id)
 		return false
 	}
-	hctx, cancel := context.WithTimeout(ctx, s.cfg.HandshakeTimeout)
+	hctx, cancel := context.WithTimeout(ctx, g.cfg.HandshakeTimeout)
 	defer cancel()
-	tc := tls.Server(c.nc, s.tlsFor(c))
+	tc := tls.Server(c.nc, g.tlsFor(c))
 	if err := tc.HandshakeContext(hctx); err != nil {
-		s.log.Debug("StartTLS handshake failed", "conn_id", c.id, "client_ip", c.ClientIP(), "err", err)
+		g.log.Debug("StartTLS handshake failed", "conn_id", c.id, "client_ip", c.ClientIP(), "err", err)
 		return false
 	}
 	c.wmu.Lock()
@@ -521,7 +594,7 @@ func (s *Server) startTLS(ctx context.Context, c *Conn, m *message) bool {
 	c.rd = bufio.NewReaderSize(tc, readBufferSize)
 	c.wmu.Unlock()
 	c.tls.Store(true)
-	s.log.Debug("StartTLS established", "conn_id", c.id, "client_ip", c.ClientIP(), "version", tlsVersion(tc))
+	g.log.Debug("StartTLS established", "conn_id", c.id, "client_ip", c.ClientIP(), "version", tlsVersion(tc))
 	return true
 }
 

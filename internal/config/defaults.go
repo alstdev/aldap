@@ -99,6 +99,7 @@ func Default() *Config {
 			Anomaly:         Anomaly{Enabled: true, LearnFor: d(24 * time.Hour)},
 			Honeytoken:      Honeytoken{Enabled: true, LockDuration: d(24 * time.Hour)},
 			Fingerprint:     Detector{Enabled: false},
+			ClientIPMasked:  ClientIPMasked{Enabled: true, Window: d(10 * time.Minute), MinRequests: 50, MinSharePercent: 90, MinAccounts: 3, IgnoreCIDRs: []string{}},
 		},
 		Events: Events{
 			Schema:     "aldap.event.v1",

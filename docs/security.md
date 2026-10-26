@@ -113,6 +113,22 @@ an exponential decay (half-life 1 h): honeytoken 100, `attack_start` high
 bind 1. Locks, honeytoken hits and refused operations are scored from the
 event stream (`Engine.Note`), the rest from the detectors.
 
+Masked client addresses (`[ids.client_ip_masked]`, Stage 12): binds and
+searches are counted per source in ten buckets over `window`. Once a bucket
+width (`window/10`), from `Tick`, the window is judged: with at least
+`min_requests` requests, the top source holding at least
+`min_share_percent` of them and at least `min_accounts` distinct accounts,
+and that source a private (RFC 1918, `fc00::/7`), shared (`100.64.0.0/10`)
+or link-local address — loopback excluded — not in `ignore_cidrs`, the
+engine logs a WARN and emits `insecure_config{what=client_ip_masked,
+share_percent, requests, requests_total, accounts, window}` with the address
+in `client_ip`, once per window and address. It means a NAT, proxy or
+container network (podman-compose, a custom Podman network, rootlesskit)
+replaces client addresses: per-IP limits, `allow_cidrs` and every
+source-based detector are blind (`docs/podman.md`). Tables are bounded
+(4096 sources and 64 accounts per source and bucket; further sources only
+count towards the total).
+
 ## session_summary (`internal/listener`)
 
 Every connection ends with `session_summary{binds_ok, binds_fail, searches,

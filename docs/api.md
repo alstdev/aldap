@@ -116,5 +116,7 @@ the buffer are lost; compare the first `id` with `N+1` to detect that.
   4. reload; when it fails (e.g. a port in use) the previous file is restored atomically and the
      previous configuration keeps serving → `500`, the error names the cause.
   The answer is `{"ok": true, "backup": "<path>"}`. Requests are serialized. `409 no_config_file` when the
-  configuration comes from the environment only.
+  configuration comes from the environment only; `409 config_read_only` when the file or its
+  directory cannot be written (e.g. a container mount with `:ro`, `docs/podman.md`): view and
+  `dry_run` validation still work, edits go through the host file and a reload.
 - `POST /v1/reload` — same as `SIGHUP`; `400 invalid_config` keeps the running configuration.

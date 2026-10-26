@@ -133,6 +133,17 @@ lock_duration = "24h"
 [ids.fingerprint]
 enabled = false
 
+# Warns (insecure_config what=client_ip_masked) when most requests come from one
+# private address for several accounts: a NAT or container network hides the
+# client IPs (podman-compose, custom Podman network; see docs/podman.md).
+[ids.client_ip_masked]
+enabled           = true
+window            = "10m"
+min_requests      = 50
+min_share_percent = 90
+min_accounts      = 3
+ignore_cidrs      = []        # e.g. an application server binding for its users
+
 # ------------------------------------------------------------------ profiles
 [profile.virola]
 listen            = [":636"]

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -356,5 +357,21 @@ func TestController_ValidateConfigAndRecord(t *testing.T) {
 	ctl.path = ""
 	if err := ctl.ValidateConfig(ctx, orig); !errors.Is(err, api.ErrNoConfigFile) {
 		t.Errorf("no file: %v", err)
+	}
+}
+
+func TestReadOnly_ConfigWrite(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{fmt.Errorf("write /etc/aldap/aldap.toml: %w", &fs.PathError{Op: "open", Path: "/etc/aldap", Err: syscall.EROFS}), true},
+		{fmt.Errorf("backup: %w", fs.ErrPermission), true},
+		{errors.New("disk full"), false},
+	} {
+		got := readOnly(tc.err)
+		if errors.Is(got, api.ErrConfigReadOnly) != tc.want {
+			t.Errorf("readOnly(%v) = %v", tc.err, got)
+		}
 	}
 }

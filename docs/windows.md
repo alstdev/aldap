@@ -42,6 +42,24 @@ From an **elevated** PowerShell (the pipe ACL admits SYSTEM and Administrators o
       (`conhost`, 16 colors); `?` lists the keys, `q` quits; `$EDITOR` unset → `e` on Config opens Notepad.
 - [ ] `aldapctl.exe --url https://<host>:8636 --token-file C:\path\token --ca-file ca.pem status` over TCP.
 
-## Not yet available
+## Service (`aldap.exe service`, `kardianos/service`)
 
-- `aldap.exe service install` (`kardianos/service`, Event Log) — Stage 12.
+From an **elevated** PowerShell:
+
+- [ ] `aldap.exe service install --config C:\ProgramData\ALDAP\aldap.toml` registers the service
+      `aldap` (automatic start, restart on failure after 5 s) with the command line
+      `aldap.exe service run --name aldap --config C:\ProgramData\ALDAP\aldap.toml --log-file C:\ProgramData\ALDAP\aldap.log`;
+      an invalid configuration is refused before anything is registered (exit 1).
+- [ ] `Get-Service aldap` shows it; `aldap.exe service status` prints `stopped` (exit 3).
+- [ ] `aldap.exe service start` → `running`; the listeners answer; `aldapctl.exe status` works over the pipe.
+- [ ] `C:\ProgramData\ALDAP\aldap.log` receives the log and the stdout events; its ACL is the
+      creating administrator's (the file is created 0600 on Unix, inherited ACL on Windows — check
+      that `Users` cannot read it, tighten with `icacls` otherwise).
+- [ ] Warnings and errors also appear in the Event Log: `Get-WinEvent -LogName Application -MaxEvents 20 |
+      Where-Object ProviderName -eq aldap` (e.g. after `aldapctl.exe reload` with a broken file).
+- [ ] A configuration that does not start (e.g. port in use) makes `service start` fail and the
+      cause is in the log file and the Event Log.
+- [ ] `aldap.exe service stop` drains (requests in flight finish, clients get the Notice of
+      Disconnection) within `server.shutdown_timeout`; the pipe is gone afterwards.
+- [ ] `aldapctl.exe reload` reloads without a restart (Windows has no SIGHUP).
+- [ ] `aldap.exe service uninstall` removes the service and the Event Log source.

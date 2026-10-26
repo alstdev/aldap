@@ -112,8 +112,9 @@
 
 ## Stage 12 — Hot reload без розриву, graceful, служба
 Читати: SPEC §3.6, §5.3, §10.4, §10.5; TESTING «Транспорт».
-- [ ] Hot-swap listener'ів (додати/прибрати порт без рестарту), атомарна заміна правил профілю, збереження стану rate limit.
-- [ ] Graceful drain з `unavailable` notice; `kardianos/service` (install/uninstall/start/stop), Windows named pipe ACL, Event Log.
+- [x] Hot-swap listener'ів (додати/прибрати порт без рестарту), атомарна заміна правил профілю, збереження стану rate limit.
+- [x] Graceful drain з `unavailable` notice; `kardianos/service` (install/uninstall/start/stop), Windows named pipe ACL, Event Log. (Windows — лише cross-compile + ручний чекліст `docs/windows.md`; `aldapctl stop` — OPEN у DECISIONS.)
+- [x] Rootless Podman (доручення власника): `build.sh --podman`, Quadlet `deploy/podman/aldap.container`, `docs/podman.md`, детектор `[ids.client_ip_masked]`. BLOCKED: перевірка на реальному хості з podman (у середовищі немає podman).
 **КП:** тест: reload зі зміною `attrs.allow` під час активного paged search — поточний пошук завершується за старими правилами, наступний — за новими; тест drain з активним запитом.
 
 ## Stage 13 — Samba AD інтеграція, DHI, реліз

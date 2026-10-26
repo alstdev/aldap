@@ -1,7 +1,8 @@
 // Package ids detects attack patterns from what the proxy observes (SPEC
 // §3.4 [ids]): password spray, credential stuffing, slow brute force and
 // account enumeration on binds; reconnaissance signatures on searches; a
-// learned baseline with anomaly reports; client fingerprints. Detections
+// learned baseline with anomaly reports; client fingerprints; client
+// addresses masked by a NAT or container network. Detections
 // become attack_start/attack_summary/attack_end, recon and anomaly events,
 // and feed the indicator scores served by /v1/indicators.
 package ids
@@ -139,6 +140,7 @@ type Engine struct {
 	learnTill time.Time
 	seq       atomic.Uint64
 	ind       map[string]*indicator
+	masked    *maskedTracker
 }
 
 // New creates an engine with cfg; learning starts now.
@@ -156,7 +158,7 @@ func New(cfg config.Intrusion, o Options) *Engine {
 		o.MaxSources = 100000
 	}
 	e := &Engine{o: o, ev: o.Events, log: o.Logger, now: o.Now, cfg: cfg, sources: map[string]*source{}, attacks: map[string]*attack{},
-		baselines: map[string]*baseline{}, ind: map[string]*indicator{}}
+		baselines: map[string]*baseline{}, ind: map[string]*indicator{}, masked: newMaskedTracker()}
 	e.learnTill = e.now().Add(cfg.Anomaly.LearnFor.D())
 	return e
 }
@@ -229,6 +231,7 @@ func (e *Engine) Bind(o BindObs) {
 		hits = s.detect(cfg, now)
 	}
 	e.mu.Unlock()
+	e.masked.observe(cfg.ClientIPMasked, o.IP, o.Account, now)
 	for _, h := range hits {
 		e.record(h, o.IP, o.Profile, now)
 	}
@@ -509,6 +512,7 @@ func (e *Engine) Tick() {
 		}
 	}
 	e.mu.Unlock()
+	e.checkMasked(cfg.ClientIPMasked, now)
 	for _, a := range summaries {
 		e.emitAttack(events.AttackSummary, a, "")
 	}

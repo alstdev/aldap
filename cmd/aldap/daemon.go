@@ -48,6 +48,24 @@ type runtimeState struct {
 	caches       cacheSet
 	recorders    recorderSet
 	lockdownAuto atomic.Bool
+
+	// Connection limiters keep counting the open connections across
+	// reloads; a reload only changes their limits.
+	global *listener.Limiter
+	limMu  sync.Mutex
+	perIP  map[string]*listener.IPLimiter
+}
+
+// ipLimiter returns the per-IP connection limiter of a profile.
+func (r *runtimeState) ipLimiter(profile string) *listener.IPLimiter {
+	r.limMu.Lock()
+	defer r.limMu.Unlock()
+	l := r.perIP[profile]
+	if l == nil {
+		l = listener.NewIPLimiter(0)
+		r.perIP[profile] = l
+	}
+	return l
 }
 
 // notifyQueue is the bus subscription size of the notifier.
@@ -60,7 +78,7 @@ func newRuntimeState(cfg *config.Config, log *slog.Logger, host string, secrets 
 	if err != nil {
 		return nil, err
 	}
-	rs := &runtimeState{bus: bus, metrics: m}
+	rs := &runtimeState{bus: bus, metrics: m, global: listener.NewLimiter(0), perIP: map[string]*listener.IPLimiter{}}
 	rs.limiter = ratelimit.New(ratelimit.Options{Events: rs, Logger: log, Metrics: m})
 	rs.ids = ids.New(cfg.Intrusion, ids.Options{Events: rs, Logger: log, OnAttack: rs.onAttack, OnAttackEnd: rs.onAttackEnd, Metrics: m})
 	rs.notify = notify.New(notify.Options{Hostname: host, Version: version, Secrets: secrets, Logger: log, Metrics: m, UserAgent: "aldap/" + version})
@@ -115,6 +133,11 @@ type daemonOptions struct {
 	EventsOut io.Writer
 	// State is the process-wide runtime state (nil = created by buildDaemon).
 	State *runtimeState
+	// SystemLog also receives warnings and errors (Windows Event Log when
+	// running as a service; nil = none).
+	SystemLog systemLogger
+	// Ready is called once the listeners and the API serve (service start).
+	Ready func()
 }
 
 // daemon is one built configuration: upstreams, profiles and listeners.
@@ -126,32 +149,37 @@ type daemon struct {
 
 	upstreams map[string]*upstream.Upstream
 	profiles  []*servedProfile
-	global    *listener.Limiter
 	state     *runtimeState
 
-	mu       sync.Mutex
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	started  bool
-	stopOnce sync.Once
+	mu      sync.Mutex
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup // background loops of this generation
+	started bool
+	// pool is the socket pool while this generation is the serving one;
+	// a reload hands it to the next generation.
+	pool        *socketPool
+	specs       []socketSpec
+	stopOnce    sync.Once
+	releaseOnce sync.Once
 }
 
 // servedProfile is one [profile.<name>] with its listeners.
 type servedProfile struct {
-	name      string
-	cfg       *config.Profile
-	tls       *tlsutil.Manager
-	dir       *vdir.Directory
-	cache     *profileCache
-	shadow    *record.Shadow
-	rec       *profileRecorder
-	servers   []*listener.Server
-	addrs     []string
-	listeners []net.Listener
+	name   string
+	cfg    *config.Profile
+	tls    *tlsutil.Manager
+	dir    *vdir.Directory
+	cache  *profileCache
+	shadow *record.Shadow
+	rec    *profileRecorder
+	addrs  []string
+	// lcfg is the listener configuration of every address of the profile.
+	lcfg listener.Config
 }
 
-// newLogger builds the process logger from [server].
-func newLogger(s config.Server, out io.Writer) *slog.Logger {
+// newLogger builds the process logger from [server]; sys, when set, also
+// receives warnings and errors.
+func newLogger(s config.Server, out io.Writer, sys systemLogger) *slog.Logger {
 	lvl := slog.LevelInfo
 	switch s.LogLevel {
 	case "debug":
@@ -162,10 +190,11 @@ func newLogger(s config.Server, out io.Writer) *slog.Logger {
 		lvl = slog.LevelError
 	}
 	ho := &slog.HandlerOptions{Level: lvl}
+	var h slog.Handler = slog.NewTextHandler(out, ho)
 	if s.LogFormat == "json" {
-		return slog.New(slog.NewJSONHandler(out, ho))
+		h = slog.NewJSONHandler(out, ho)
 	}
-	return slog.New(slog.NewTextHandler(out, ho))
+	return slog.New(withSystemLog(h, sys))
 }
 
 // buildDaemon validates cfg (strict files) and constructs every component
@@ -178,7 +207,7 @@ func buildDaemon(cfg *config.Config, o daemonOptions) (*daemon, error) {
 	if !rep.OK() {
 		return nil, fmt.Errorf("configuration invalid:\n%s", rep.Error())
 	}
-	log := newLogger(cfg.Server, o.LogOut)
+	log := newLogger(cfg.Server, o.LogOut, o.SystemLog)
 	for _, w := range rep.Warnings {
 		log.Warn("configuration warning", "key", w.Path, "msg", w.Msg)
 	}
@@ -204,8 +233,7 @@ func buildDaemon(cfg *config.Config, o daemonOptions) (*daemon, error) {
 	if err := state.notify.Configure(cfg.Notify); err != nil {
 		return nil, err
 	}
-	d := &daemon{cfg: cfg, log: log, events: state, opts: o, upstreams: map[string]*upstream.Upstream{},
-		global: listener.NewLimiter(cfg.Server.MaxConnections), state: state}
+	d := &daemon{cfg: cfg, log: log, events: state, opts: o, upstreams: map[string]*upstream.Upstream{}, state: state}
 	if err := d.buildUpstreams(); err != nil {
 		return nil, err
 	}
@@ -336,7 +364,7 @@ func (d *daemon) buildProfile(name string, pcfg *config.Profile) (*servedProfile
 	lcfg := listener.Config{
 		Profile: name, Transport: pcfg.Transport, StartTLSRequired: pcfg.StartTLSRequired, Handler: sp.dir, Fingerprints: d.state.ids, Metrics: d.state.metrics,
 		MaxRequestBytes: int64(pcfg.Limits.MaxRequestBytes), IdleTimeout: pcfg.Limits.IdleTimeout.D(),
-		PerIP: listener.NewIPLimiter(pcfg.Limits.MaxConnsPerIP), Global: d.global, Logger: d.log, Events: d.events,
+		PerIP: d.state.ipLimiter(name), Global: d.state.global, Logger: d.log, Events: d.events,
 	}
 	if pcfg.Transport != listener.TransportLDAP {
 		sp.tls, err = d.buildTLS(name, pcfg)
@@ -345,13 +373,10 @@ func (d *daemon) buildProfile(name string, pcfg *config.Profile) (*servedProfile
 		}
 		lcfg.TLS = sp.tls.Config()
 	}
-	for range pcfg.Listen {
-		s, err := listener.New(lcfg)
-		if err != nil {
-			return nil, fmt.Errorf("profile.%s: %w", name, err)
-		}
-		sp.servers = append(sp.servers, s)
+	if err := listener.Check(lcfg); err != nil {
+		return nil, fmt.Errorf("profile.%s: %w", name, err)
 	}
+	sp.lcfg = lcfg
 	return sp, nil
 }
 
@@ -442,25 +467,38 @@ func (d *daemon) buildTLS(name string, pcfg *config.Profile) (*tlsutil.Manager, 
 // start opens every listener (failing fast when one address cannot be
 // bound), starts the upstream health loops and the certificate checks.
 func (d *daemon) start(ctx context.Context) error {
+	return d.takeOver(ctx, newSocketPool(), nil)
+}
+
+// takeOver makes d the serving generation on pool. With old (a reload)
+// the addresses that stay keep their sockets and connections, the
+// profile rules are swapped atomically per listener, new addresses are
+// opened and removed ones drained (SPEC §3.6); old is retired in the
+// background once the requests it still serves have finished. When an
+// address cannot be bound nothing changes and old keeps serving.
+func (d *daemon) takeOver(ctx context.Context, pool *socketPool, old *daemon) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.started {
 		return errors.New("daemon already started")
 	}
-	ctx, d.cancel = context.WithCancel(ctx)
-	lc := net.ListenConfig{}
-	for _, sp := range d.profiles {
-		for _, addr := range sp.addrs {
-			ln, err := lc.Listen(ctx, "tcp", addr)
-			if err != nil {
-				d.closeListeners()
-				d.cancel()
-				return fmt.Errorf("profile.%s: listen %s: %w", sp.name, addr, err)
-			}
-			sp.listeners = append(sp.listeners, ln)
-		}
+	specs := d.sockets()
+	if err := pool.open(ctx, specs); err != nil {
+		return err
 	}
+	if old != nil {
+		// The background loops (health checks, certificates, replica
+		// sync, sweeps) move to the new generation; requests in flight
+		// keep using old's upstreams until it is retired.
+		old.handOver()
+	}
+	ctx, d.cancel = context.WithCancel(ctx)
 	d.started = true
+	d.pool, d.specs = pool, specs
+	d.state.global.SetLimit(d.cfg.Server.MaxConnections)
+	for _, sp := range d.profiles {
+		d.state.ipLimiter(sp.name).SetLimit(sp.cfg.Limits.MaxConnsPerIP)
+	}
 	d.state.recorders.commit(d.profiles, d.log)
 	for _, u := range d.upstreams {
 		u.Start(ctx)
@@ -468,16 +506,6 @@ func (d *daemon) start(ctx context.Context) error {
 	names := make([]string, 0, len(d.profiles))
 	for _, sp := range d.profiles {
 		names = append(names, sp.name)
-		for i, ln := range sp.listeners {
-			srv := sp.servers[i]
-			d.wg.Add(1)
-			go func() {
-				defer d.wg.Done()
-				if err := srv.Serve(ln); err != nil && !errors.Is(err, listener.ErrServerClosed) {
-					d.log.Error("listener stopped", "profile", sp.name, "addr", ln.Addr().String(), "err", err)
-				}
-			}()
-		}
 		if sp.tls != nil {
 			d.wg.Add(1)
 			go func() {
@@ -499,9 +527,56 @@ func (d *daemon) start(ctx context.Context) error {
 		defer d.wg.Done()
 		d.sweepLoop(ctx)
 	}()
-	d.events.Emit(events.Event{Event: events.Startup, Level: events.LevelLow, Data: map[string]any{"version": version, "profiles": names}})
-	d.log.Info("aldap started", "version", version, "profiles", names)
+	waits := pool.apply(d, specs)
+	if old == nil {
+		d.events.Emit(events.Event{Event: events.Startup, Level: events.LevelLow, Data: map[string]any{"version": version, "profiles": names}})
+		d.log.Info("aldap started", "version", version, "profiles", names)
+		return nil
+	}
+	timeout := d.cfg.Server.ShutdownTimeout.D()
+	pool.background(func() { old.retire(waits, timeout) })
 	return nil
+}
+
+// handOver stops the background loops of a replaced generation; its
+// listeners now belong to the next one.
+func (d *daemon) handOver() {
+	d.mu.Lock()
+	d.pool = nil
+	cancel := d.cancel
+	d.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	d.wg.Wait()
+}
+
+// retire waits (within timeout) for the requests that still run under a
+// replaced generation, then releases its upstreams and shadow directories.
+func (d *daemon) retire(waits []func(context.Context) error, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for _, wait := range waits {
+		if err := wait(ctx); err != nil {
+			d.log.Warn("previous configuration still busy at shutdown_timeout, releasing it", "err", err)
+			break
+		}
+	}
+	d.release()
+}
+
+// release closes what a generation owns besides its listeners.
+func (d *daemon) release() {
+	d.releaseOnce.Do(func() {
+		for _, sp := range d.profiles {
+			if sp.shadow != nil {
+				sp.shadow.Close()
+			}
+		}
+		for _, u := range d.upstreams {
+			u.Close()
+		}
+	})
 }
 
 func (d *daemon) certLoop(ctx context.Context, m *tlsutil.Manager) {
@@ -542,66 +617,44 @@ func (d *daemon) sweepLoop(ctx context.Context) {
 	}
 }
 
-func (d *daemon) closeListeners() {
-	for _, sp := range d.profiles {
-		for _, ln := range sp.listeners {
-			_ = ln.Close() //nolint:errcheck // best effort during start failure
-		}
-		sp.listeners = nil
-	}
-}
-
 // addrs returns the bound addresses of a profile (after start).
 func (d *daemon) addrs(profileName string) []string {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	for _, sp := range d.profiles {
-		if sp.name == profileName {
-			out := make([]string, 0, len(sp.listeners))
-			for _, ln := range sp.listeners {
-				out = append(out, ln.Addr().String())
-			}
-			return out
+	pool := d.pool
+	var specs []socketSpec
+	for _, s := range d.specs {
+		if s.profile.name == profileName {
+			specs = append(specs, s)
 		}
 	}
-	return nil
+	d.mu.Unlock()
+	if pool == nil || len(specs) == 0 {
+		return nil
+	}
+	return pool.addrs(specs)
 }
 
-// stop drains the listeners within shutdown_timeout, closes the upstreams
-// and emits shutdown (SPEC §5.3).
+// stop drains the listeners within shutdown_timeout (SPEC §5.3), stops
+// the background loops, closes the upstreams and emits shutdown. A
+// generation replaced by a reload no longer owns the listeners: stop only
+// releases what it still holds.
 func (d *daemon) stop() {
 	d.stopOnce.Do(func() {
 		d.mu.Lock()
-		started := d.started
+		started, pool := d.started, d.pool
+		d.pool = nil
 		d.mu.Unlock()
-		if started {
+		if pool != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), d.cfg.Server.ShutdownTimeout.D())
-			defer cancel()
-			var wg sync.WaitGroup
-			for _, sp := range d.profiles {
-				for _, s := range sp.servers {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						if err := s.Shutdown(ctx); err != nil {
-							d.log.Warn("connections cut at shutdown timeout", "profile", sp.name)
-						}
-					}()
-				}
-			}
-			wg.Wait()
+			pool.shutdown(ctx, d.log)
+			cancel()
+		}
+		if started {
 			d.cancel()
 			d.wg.Wait()
-			for _, sp := range d.profiles {
-				if sp.shadow != nil {
-					sp.shadow.Close()
-				}
-			}
 		}
-		for _, u := range d.upstreams {
-			u.Close()
-		}
-		if started {
+		d.release()
+		if pool != nil {
 			d.events.Emit(events.Event{Event: events.Shutdown, Level: events.LevelLow, Data: map[string]any{"version": version}})
 			d.log.Info("aldap stopped")
 		}

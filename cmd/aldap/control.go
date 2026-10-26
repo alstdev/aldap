@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -231,11 +232,11 @@ func (c *controller) ApplyConfig(ctx context.Context, body []byte) (api.ApplyRes
 	res := api.ApplyResult{}
 	if prev != nil {
 		if res.Backup, err = c.backup(prev, mode); err != nil {
-			return api.ApplyResult{}, err
+			return api.ApplyResult{}, readOnly(err)
 		}
 	}
 	if err := writeFileAtomic(c.path, body, mode); err != nil {
-		return api.ApplyResult{}, err
+		return api.ApplyResult{}, readOnly(err)
 	}
 	if err := c.Reload(ctx); err != nil {
 		if rerr := c.rollback(prev, mode); rerr != nil {
@@ -244,6 +245,16 @@ func (c *controller) ApplyConfig(ctx context.Context, body []byte) (api.ApplyRes
 		return api.ApplyResult{}, fmt.Errorf("reload failed, previous file restored: %w", err)
 	}
 	return res, nil
+}
+
+// readOnly marks a write refused by a read-only file system or missing
+// write permission (a configuration directory mounted :ro): the API then
+// answers 409 config_read_only instead of an internal error.
+func readOnly(err error) error {
+	if errors.Is(err, syscall.EROFS) || errors.Is(err, fs.ErrPermission) {
+		return fmt.Errorf("%w (edit the file on the host and reload): %v", api.ErrConfigReadOnly, err) //nolint:errorlint // one sentinel, the cause as text
+	}
+	return err
 }
 
 // backup writes prev to <path>.bak.<ts> without overwriting an older backup.

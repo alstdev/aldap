@@ -158,16 +158,32 @@ type Lockdown struct {
 
 // Intrusion holds detector settings ([ids]).
 type Intrusion struct {
-	SummaryInterval Duration    `toml:"summary_interval" doc:"Interval of attack_summary events during an attack."`
-	QuietPeriod     Duration    `toml:"quiet_period" doc:"Silence after which attack_end is emitted."`
-	Spray           Spray       `toml:"spray" doc:"Password spray detector."`
-	Stuffing        Stuffing    `toml:"stuffing" doc:"Credential stuffing detector."`
-	SlowBrute       SlowBrute   `toml:"slow_brute" doc:"Slow brute force detector."`
-	Enumeration     Enumeration `toml:"enumeration" doc:"Account enumeration detector."`
-	Recon           Detector    `toml:"recon" doc:"Reconnaissance search signatures."`
-	Anomaly         Anomaly     `toml:"anomaly" doc:"Baseline and anomaly detector."`
-	Honeytoken      Honeytoken  `toml:"honeytoken" doc:"Honeytoken detector."`
-	Fingerprint     Detector    `toml:"fingerprint" doc:"TLS and LDAP client fingerprint detector."`
+	SummaryInterval Duration       `toml:"summary_interval" doc:"Interval of attack_summary events during an attack."`
+	QuietPeriod     Duration       `toml:"quiet_period" doc:"Silence after which attack_end is emitted."`
+	Spray           Spray          `toml:"spray" doc:"Password spray detector."`
+	Stuffing        Stuffing       `toml:"stuffing" doc:"Credential stuffing detector."`
+	SlowBrute       SlowBrute      `toml:"slow_brute" doc:"Slow brute force detector."`
+	Enumeration     Enumeration    `toml:"enumeration" doc:"Account enumeration detector."`
+	Recon           Detector       `toml:"recon" doc:"Reconnaissance search signatures."`
+	Anomaly         Anomaly        `toml:"anomaly" doc:"Baseline and anomaly detector."`
+	Honeytoken      Honeytoken     `toml:"honeytoken" doc:"Honeytoken detector."`
+	Fingerprint     Detector       `toml:"fingerprint" doc:"TLS and LDAP client fingerprint detector."`
+	ClientIPMasked  ClientIPMasked `toml:"client_ip_masked" doc:"Detector of a proxy or container network that replaces client addresses with its own (insecure_config what=client_ip_masked)."`
+}
+
+// ClientIPMasked holds the detector of hidden client addresses
+// ([ids.client_ip_masked]): most binds and searches arriving from one
+// private address for several accounts means a NAT, proxy or container
+// network (podman-compose, a custom Podman network) stands between the
+// clients and ALDAP, and per-IP limits, allow_cidrs and the IDS see only
+// that address.
+type ClientIPMasked struct {
+	Enabled         bool     `toml:"enabled" doc:"Enable the detector."`
+	Window          Duration `toml:"window" doc:"Observation window."`
+	MinRequests     int      `toml:"min_requests" doc:"Binds and searches within window needed before the share is judged."`
+	MinSharePercent int      `toml:"min_share_percent" doc:"Share (percent) of the binds and searches from one private address that triggers the detector."`
+	MinAccounts     int      `toml:"min_accounts" doc:"Distinct accounts seen from that address that trigger the detector."`
+	IgnoreCIDRs     []string `toml:"ignore_cidrs" doc:"Sources never reported, e.g. an application server that binds on behalf of its users."`
 }
 
 // Detector is a detector with only an on/off switch.

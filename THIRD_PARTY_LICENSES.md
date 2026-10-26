@@ -28,6 +28,7 @@ ALDAP is licensed under MIT. The following dependencies are distributed with the
 | github.com/google/uuid | BSD-3-Clause | https://github.com/google/uuid/blob/v1.6.0/LICENSE |
 | github.com/hashicorp/go-hclog | MIT | https://github.com/hashicorp/go-hclog/blob/v1.6.3/LICENSE |
 | github.com/jimlambrt/gldap | MIT | https://github.com/jimlambrt/gldap/blob/v0.1.14/LICENSE |
+| github.com/kardianos/service | Zlib | https://github.com/kardianos/service/blob/v1.3.0/LICENSE |
 | github.com/lucasb-eyer/go-colorful | MIT | https://github.com/lucasb-eyer/go-colorful/blob/v1.3.0/LICENSE |
 | github.com/mattn/go-colorable | MIT | https://github.com/mattn/go-colorable/blob/v0.1.13/LICENSE |
 | github.com/mattn/go-isatty | MIT | https://github.com/mattn/go-isatty/blob/v0.0.20/LICENSE |
