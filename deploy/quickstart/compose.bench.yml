@@ -1,0 +1,14 @@
+# Quick start without an AD: point ALDAP at the Samba AD test bench
+# (deploy/samba-dc, docs/samba.md). Start the bench first, then
+#   docker compose -f compose.yml -f compose.bench.yml up -d --wait
+services:
+  aldap:
+    networks: [default, bench]
+    volumes:
+      - ./bench:/etc/aldap:ro                # replaces ./config
+      - ../../testdata/samba-ca.pem:/etc/aldap-bench/ca.pem:ro
+
+networks:
+  bench:
+    external: true
+    name: aldap-samba_default

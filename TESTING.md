@@ -93,7 +93,7 @@
 ## Samba AD стенд (`deploy/samba-dc/`)
 - `docker compose -f deploy/samba-dc/compose.yml up -d` → `dc1` (+ опційно `dc2` як joined DC; якщо join у контейнерах нестабільний — `dc2` = другий незалежний Samba з тим самим LDIF і документоване обмеження).
 - Провізія: `samba-tool domain provision --realm=TEST.ALDAP --domain=TEST --server-role=dc --use-rfc2307`; LDIF `testdata/ad.ldif` адаптований; `ldaps` з self-signed CA, експорт CA у `testdata/samba-ca.pem`.
-- Тести під tag `integration_samba` читають `ALDAP_TEST_SAMBA_URL`, `..._BIND_DN`, `..._BIND_PASSWORD_FILE`.
+- Тести під tag `integration_samba` читають `ALDAP_TEST_SAMBA_URL`, `..._BIND_DN`, `..._BIND_PASSWORD_FILE` (+ `..._USER_PASSWORD_FILE`, `..._ADMIN_PASSWORD_FILE`, `..._CA`, `..._COMPOSE`; деталі — `docs/samba.md`). Паролі генерує `deploy/samba-dc/init.sh` у `deploy/samba-dc/secrets/` (не в репо).
 - Failover-тест: `docker stop dc1` → перевірка → `docker start dc1`.
 
 ## CI (`.github/workflows/ci.yml`)

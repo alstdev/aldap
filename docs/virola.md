@@ -6,6 +6,16 @@ searches below the virtual base, and one bind per user login. This page covers t
 
 ## Virola and ALDAP in one stack
 
+Ready to use: `deploy/virola-stack/` (`compose.yml`, `config/aldap.toml`, and
+`compose.bench.yml` for the Samba test bench), steps in README «Virola and ALDAP in one stack».
+Checked in Stage 13 with a stand-in LDAP client at Virola's address `10.89.10.20` against the
+Samba bench: service bind and search over `ldaps://aldap:636` with the ALDAP CA, user binds,
+`bind_ok.client_ip = 10.89.10.20`, 25 failed binds from that address lock no IP, three wrong
+passwords lock that one account, spray/enumeration are detected, the LDAP port is not
+published. The Virola server itself (`providesupport/virola-server`, loaded from the tarball of
+Virola's Docker guide) was not run: virola.io is not reachable from the build environment
+(`docs/limitations.md`).
+
 ```
                     internal network "stack" (10.89.10.0/24), no published LDAP port
   ┌──────────────────────┐   ldaps://aldap:636   ┌──────────────────────┐   ldaps   ┌────┐

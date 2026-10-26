@@ -70,15 +70,25 @@ integration: ## Integration tests against in-memory LDAP and e2e clients
 	CGO_ENABLED=1 $(GOTESTSUM) $(GOTESTSUM_FLAGS) --junitfile artifacts/junit-integration.xml --jsonfile artifacts/integration.json -- -race -tags integration -timeout 20m ./...
 
 .PHONY: integration-samba
+# Samba AD bench (deploy/samba-dc, docs/samba.md): init.sh generates the passwords
+# and the LDAPS CA into deploy/samba-dc/secrets/ (git-ignored) and exports the CA
+# to testdata/samba-ca.pem; two DCs on 127.0.0.1:6636 and :6637.
+SAMBA_COMPOSE := $(CURDIR)/deploy/samba-dc/compose.yml
+SAMBA_SECRETS := $(CURDIR)/deploy/samba-dc/secrets
 integration-samba: ## Integration tests against Samba AD DC in Docker
-	docker compose -f deploy/samba-dc/compose.yml up -d --wait
-	ALDAP_TEST_SAMBA_URL=ldaps://localhost:6636 \
-	ALDAP_TEST_SAMBA_BIND_DN="CN=Administrator,CN=Users,DC=test,DC=aldap" \
-	ALDAP_TEST_SAMBA_BIND_PASSWORD_FILE=deploy/samba-dc/secrets/admin_pass \
-	ALDAP_TEST_SAMBA_CA=testdata/samba-ca.pem \
-	$(GOTESTSUM) $(GOTESTSUM_FLAGS) --jsonfile artifacts/samba.json -- -tags integration_samba -timeout 30m ./... ; rc=$$?; \
-	docker compose -f deploy/samba-dc/compose.yml logs > artifacts/samba.log 2>&1 || true; \
-	docker compose -f deploy/samba-dc/compose.yml down -v; exit $$rc
+	@mkdir -p artifacts
+	deploy/samba-dc/init.sh
+	docker compose -f $(SAMBA_COMPOSE) up -d --wait --wait-timeout 300
+	ALDAP_TEST_SAMBA_URL=ldaps://127.0.0.1:6636,ldaps://127.0.0.1:6637 \
+	ALDAP_TEST_SAMBA_BIND_DN="CN=svc-aldap,CN=Users,DC=test,DC=aldap" \
+	ALDAP_TEST_SAMBA_BIND_PASSWORD_FILE=$(SAMBA_SECRETS)/svc_pass \
+	ALDAP_TEST_SAMBA_USER_PASSWORD_FILE=$(SAMBA_SECRETS)/user_pass \
+	ALDAP_TEST_SAMBA_ADMIN_PASSWORD_FILE=$(SAMBA_SECRETS)/admin_pass \
+	ALDAP_TEST_SAMBA_CA=$(CURDIR)/testdata/samba-ca.pem \
+	ALDAP_TEST_SAMBA_COMPOSE=$(SAMBA_COMPOSE) \
+	CGO_ENABLED=1 $(GOTESTSUM) $(GOTESTSUM_FLAGS) --junitfile artifacts/junit-samba.xml --jsonfile artifacts/samba.json -- -race -tags integration_samba -run '^TestSamba_' -timeout 10m ./cmd/aldap/ ; rc=$$?; \
+	docker compose -f $(SAMBA_COMPOSE) logs --no-color > artifacts/samba.log 2>&1 || true; \
+	docker compose -f $(SAMBA_COMPOSE) down -v; exit $$rc
 
 .PHONY: fuzz
 fuzz: ## Fuzz parsers for 2 minutes each
@@ -107,7 +117,7 @@ licenses: ## Check dependency licenses and regenerate THIRD_PARTY_LICENSES.md
 
 .PHONY: shellcheck
 shellcheck: ## shellcheck all scripts
-	shellcheck -x build.sh $(wildcard scripts/*.sh)
+	shellcheck -x build.sh $(wildcard scripts/*.sh) $(wildcard deploy/samba-dc/*.sh)
 
 .PHONY: ci
 ci: lint vet vuln licenses windows-ctl test integration shellcheck ## Everything except Samba

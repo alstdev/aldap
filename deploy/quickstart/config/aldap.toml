@@ -1,0 +1,47 @@
+# ALDAP quick start (README.md). One profile "virola" over one AD upstream.
+# Edit the lines marked EDIT for your directory (bench/aldap.toml is the same
+# file for the Samba test bench, compose.bench.yml).
+# Every key: docs/config.md; a full example: aldap.toml.example.
+
+[server]
+log_format = "json"
+
+[tls]
+mode      = "builtin-ca"
+ca_dir    = "/var/lib/aldap/ca"
+auto_init = true
+san       = ["localhost", "127.0.0.1"]                    # EDIT: names/addresses clients connect to
+
+[upstream.ad]
+servers            = ["ldaps://dc1.corp.example:636"]     # EDIT
+tls_ca_file        = "/etc/aldap/ad-ca.pem"               # the CA of your DCs (config/ad-ca.pem)
+bind_dn            = "CN=svc-aldap,CN=Users,DC=corp,DC=example"   # EDIT: read-only service account
+bind_password_file = "/run/secrets/ad_pass"
+base_dn            = "DC=corp,DC=example"                 # EDIT
+
+[profile.virola]
+listen       = [":636"]
+transport    = "ldaps"
+upstream     = "ad"
+virtual_base = "ou=virola,dc=aldap"
+bases        = ["CN=Users,DC=corp,DC=example"]            # EDIT: where the users are
+filter       = "(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))"
+rdn_attr     = "sAMAccountName"
+
+[profile.virola.client_bind]
+dn            = "cn=virola,ou=services,dc=aldap"
+password_file = "/run/secrets/virola_bind"
+
+[profile.virola.user_bind]
+default_domain = "corp.example"                           # EDIT: UPN suffix
+
+[profile.virola.attrs]
+allow = ["userPrincipalName", "sAMAccountName", "displayName", "mail", "memberOf", "objectClass", "objectGUID"]
+
+[profile.virola.attrs.map]
+uid = "sAMAccountName"
+cn  = "displayName"
+
+[profile.virola.groups.virola-users]
+description = "Everyone the profile exports"
+objectclass = "groupOfNames"

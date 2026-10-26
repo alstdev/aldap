@@ -1,0 +1,41 @@
+# Samba AD test bench for `make integration-samba` (docs/samba.md). Two independent
+# DCs of the same domain, provisioned from the same LDIF and secrets: dc2 is not a
+# replica (documented limitation), it lets the failover test stop dc1.
+# Run deploy/samba-dc/init.sh first: it writes ./secrets/ (git-ignored).
+# The fixed project name makes the network "aldap-samba_default" (compose.bench.yml).
+name: aldap-samba
+x-dc: &dc
+  build:
+    context: .
+    args:
+      BASE: ${SAMBA_BASE:-ubuntu:24.04}
+    secrets: [apt_ca]
+  image: aldap-samba-dc:bench
+  domainname: test.aldap
+  secrets: [admin_pass, svc_pass, user_pass, tls_cert, tls_key, tls_ca]
+  tmpfs: [/run]
+  cap_drop: [ALL]
+  # samba (as root in the container) needs these to drop privileges and bind ports.
+  cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, NET_BIND_SERVICE, KILL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  dc1:
+    <<: *dc
+    hostname: dc1
+    ports: ["127.0.0.1:6636:636"]
+  dc2:
+    <<: *dc
+    hostname: dc2
+    ports: ["127.0.0.1:6637:636"]
+
+secrets:
+  admin_pass: { file: ./secrets/admin_pass }
+  svc_pass:   { file: ./secrets/svc_pass }
+  user_pass:  { file: ./secrets/user_pass }
+  tls_cert:   { file: ./secrets/tls_cert }
+  tls_key:    { file: ./secrets/tls_key }
+  tls_ca:     { file: ./secrets/tls_ca }
+  # Build-time only: a CA bundle for apt behind a TLS-intercepting proxy
+  # (SAMBA_APT_CA=/path/to/bundle); /dev/null = image defaults.
+  apt_ca:     { file: "${SAMBA_APT_CA:-/dev/null}" }

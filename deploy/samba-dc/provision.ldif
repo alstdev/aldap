@@ -1,0 +1,313 @@
+# ALDAP Samba AD test bench (deploy/samba-dc): loaded by provision.py after
+# `samba-tool domain provision`. 2 OUs + CN=Users, 20 users (2 disabled), 5 computers,
+# groups Staff > Managers > Directors (nested, in CN=Users). No passwords here:
+# provision.py sets them from the generated secrets.
+
+dn: OU=Office,DC=test,DC=aldap
+objectClass: organizationalUnit
+ou: Office
+
+dn: OU=Branch,DC=test,DC=aldap
+objectClass: organizationalUnit
+ou: Branch
+
+dn: CN=Alice Adams,OU=Office,DC=test,DC=aldap
+objectClass: user
+cn: Alice Adams
+sAMAccountName: alice.adams
+userPrincipalName: alice.adams@test.aldap
+givenName: Alice
+sn: Adams
+displayName: Alice Adams
+mail: alice.adams@test.aldap
+department: Sales
+telephoneNumber: +380441234023
+description: bench:user
+
+dn: CN=Bob Brown,OU=Office,DC=test,DC=aldap
+objectClass: user
+cn: Bob Brown
+sAMAccountName: bob.brown
+userPrincipalName: bob.brown@test.aldap
+givenName: Bob
+sn: Brown
+displayName: Bob Brown
+mail: bob.brown@test.aldap
+department: Sales
+telephoneNumber: +380441234036
+description: bench:user
+
+dn: CN=Carol Clark,OU=Office,DC=test,DC=aldap
+objectClass: user
+cn: Carol Clark
+sAMAccountName: carol.clark
+userPrincipalName: carol.clark@test.aldap
+givenName: Carol
+sn: Clark
+displayName: Carol Clark
+mail: carol.clark@test.aldap
+department: IT
+telephoneNumber: +380441234049
+description: bench:user
+
+dn: CN=Dave Davis,OU=Office,DC=test,DC=aldap
+objectClass: user
+cn: Dave Davis
+sAMAccountName: dave.davis
+userPrincipalName: dave.davis@test.aldap
+givenName: Dave
+sn: Davis
+displayName: Dave Davis
+mail: dave.davis@test.aldap
+department: IT
+telephoneNumber: +380441234062
+description: bench:user
+
+dn: CN=Eve Evans,OU=Office,DC=test,DC=aldap
+objectClass: user
+cn: Eve Evans
+sAMAccountName: eve.evans
+userPrincipalName: eve.evans@test.aldap
+givenName: Eve
+sn: Evans
+displayName: Eve Evans
+mail: eve.evans@test.aldap
+department: Board
+telephoneNumber: +380441234075
+description: bench:user
+
+dn: CN=Frank Fox,OU=Office,DC=test,DC=aldap
+objectClass: user
+cn: Frank Fox
+sAMAccountName: frank.fox
+userPrincipalName: frank.fox@test.aldap
+givenName: Frank
+sn: Fox
+displayName: Frank Fox
+telephoneNumber: +380441234086
+description: bench:user
+
+dn: CN=Grace Green,OU=Office,DC=test,DC=aldap
+objectClass: user
+cn: Grace Green
+sAMAccountName: grace.green
+userPrincipalName: grace.green@test.aldap
+givenName: Grace
+sn: Green
+displayName: Grace Green
+mail: grace.green@test.aldap
+telephoneNumber: +380441234098
+description: bench:user
+
+dn: CN=Heidi Hill,OU=Office,DC=test,DC=aldap
+objectClass: user
+cn: Heidi Hill
+sAMAccountName: heidi.hill
+userPrincipalName: heidi.hill@test.aldap
+givenName: Heidi
+sn: Hill
+displayName: Heidi Hill
+mail: heidi.hill@test.aldap
+telephoneNumber: +380441234110
+description: bench:disabled
+
+dn: CN=Ivan Ivanov,OU=Office,DC=test,DC=aldap
+objectClass: user
+cn: Ivan Ivanov
+sAMAccountName: ivan.ivanov
+userPrincipalName: ivan.ivanov@test.aldap
+givenName: Ivan
+sn: Ivanov
+displayName: Ivan Ivanov
+mail: ivan.ivanov@test.aldap
+telephoneNumber: +380441234122
+description: bench:user
+
+dn: CN=Judy Jones,OU=Office,DC=test,DC=aldap
+objectClass: user
+cn: Judy Jones
+sAMAccountName: judy.jones
+userPrincipalName: judy.jones@test.aldap
+givenName: Judy
+sn: Jones
+displayName: Judy Jones
+mail: judy.jones@test.aldap
+telephoneNumber: +380441234134
+description: bench:user
+
+dn: CN=Kim King,OU=Branch,DC=test,DC=aldap
+objectClass: user
+cn: Kim King
+sAMAccountName: kim.king
+userPrincipalName: kim.king@test.aldap
+givenName: Kim
+sn: King
+displayName: Kim King
+mail: kim.king@test.aldap
+telephoneNumber: +380441234146
+description: bench:user
+
+dn: CN=Leo Lee,OU=Branch,DC=test,DC=aldap
+objectClass: user
+cn: Leo Lee
+sAMAccountName: leo.lee
+userPrincipalName: leo.lee@test.aldap
+givenName: Leo
+sn: Lee
+displayName: Leo Lee
+mail: leo.lee@test.aldap
+telephoneNumber: +380441234158
+description: bench:user
+
+dn: CN=Mia Moore,OU=Branch,DC=test,DC=aldap
+objectClass: user
+cn: Mia Moore
+sAMAccountName: mia.moore
+userPrincipalName: mia.moore@test.aldap
+givenName: Mia
+sn: Moore
+displayName: Mia Moore
+mail: mia.moore@test.aldap
+telephoneNumber: +380441234170
+description: bench:user
+
+dn: CN=Ned Nash,OU=Branch,DC=test,DC=aldap
+objectClass: user
+cn: Ned Nash
+sAMAccountName: ned.nash
+userPrincipalName: ned.nash@test.aldap
+givenName: Ned
+sn: Nash
+displayName: Ned Nash
+telephoneNumber: +380441234181
+description: bench:user
+
+dn: CN=Olga Orlova,OU=Branch,DC=test,DC=aldap
+objectClass: user
+cn: Olga Orlova
+sAMAccountName: olga.orlova
+userPrincipalName: olga.orlova@test.aldap
+givenName: Olga
+sn: Orlova
+displayName: Olga Orlova
+mail: olga.orlova@test.aldap
+telephoneNumber: +380441234193
+description: bench:disabled
+
+dn: CN=Pete Price,OU=Branch,DC=test,DC=aldap
+objectClass: user
+cn: Pete Price
+sAMAccountName: pete.price
+userPrincipalName: pete.price@test.aldap
+givenName: Pete
+sn: Price
+displayName: Pete Price
+mail: pete.price@test.aldap
+telephoneNumber: +380441234205
+description: bench:user
+
+dn: CN=Quinn Quill,OU=Branch,DC=test,DC=aldap
+objectClass: user
+cn: Quinn Quill
+sAMAccountName: quinn.quill
+userPrincipalName: quinn.quill@test.aldap
+givenName: Quinn
+sn: Quill
+displayName: Quinn Quill
+mail: quinn.quill@test.aldap
+telephoneNumber: +380441234217
+description: bench:user
+
+dn: CN=Rosa Reed,OU=Branch,DC=test,DC=aldap
+objectClass: user
+cn: Rosa Reed
+sAMAccountName: rosa.reed
+userPrincipalName: rosa.reed@test.aldap
+givenName: Rosa
+sn: Reed
+displayName: Rosa Reed
+mail: rosa.reed@test.aldap
+telephoneNumber: +380441234229
+description: bench:user
+
+dn: CN=svc-aldap,CN=Users,DC=test,DC=aldap
+objectClass: user
+cn: svc-aldap
+sAMAccountName: svc-aldap
+userPrincipalName: svc-aldap@test.aldap
+givenName: Svc-Aldap
+sn: Svc-Aldap
+displayName: svc-aldap
+description: bench:service
+
+dn: CN=Outside User,CN=Users,DC=test,DC=aldap
+objectClass: user
+cn: Outside User
+sAMAccountName: outside.user
+userPrincipalName: outside.user@test.aldap
+givenName: Outside
+sn: User
+displayName: Outside User
+description: bench:user
+
+dn: CN=PC-OFFICE-01,OU=Office,DC=test,DC=aldap
+objectClass: computer
+cn: PC-OFFICE-01
+sAMAccountName: PC-OFFICE-01$
+dNSHostName: pc-office-01.test.aldap
+description: bench:computer
+
+dn: CN=PC-OFFICE-02,OU=Office,DC=test,DC=aldap
+objectClass: computer
+cn: PC-OFFICE-02
+sAMAccountName: PC-OFFICE-02$
+dNSHostName: pc-office-02.test.aldap
+description: bench:computer
+
+dn: CN=PC-OFFICE-03,OU=Office,DC=test,DC=aldap
+objectClass: computer
+cn: PC-OFFICE-03
+sAMAccountName: PC-OFFICE-03$
+dNSHostName: pc-office-03.test.aldap
+description: bench:computer
+
+dn: CN=PC-BRANCH-01,OU=Branch,DC=test,DC=aldap
+objectClass: computer
+cn: PC-BRANCH-01
+sAMAccountName: PC-BRANCH-01$
+dNSHostName: pc-branch-01.test.aldap
+description: bench:computer
+
+dn: CN=PC-BRANCH-02,OU=Branch,DC=test,DC=aldap
+objectClass: computer
+cn: PC-BRANCH-02
+sAMAccountName: PC-BRANCH-02$
+dNSHostName: pc-branch-02.test.aldap
+description: bench:computer
+
+dn: CN=Directors,CN=Users,DC=test,DC=aldap
+objectClass: group
+cn: Directors
+sAMAccountName: Directors
+member: CN=Eve Evans,OU=Office,DC=test,DC=aldap
+
+dn: CN=Managers,CN=Users,DC=test,DC=aldap
+objectClass: group
+cn: Managers
+sAMAccountName: Managers
+member: CN=Dave Davis,OU=Office,DC=test,DC=aldap
+member: CN=Mia Moore,OU=Branch,DC=test,DC=aldap
+member: CN=Directors,CN=Users,DC=test,DC=aldap
+
+dn: CN=Staff,CN=Users,DC=test,DC=aldap
+objectClass: group
+cn: Staff
+sAMAccountName: Staff
+member: CN=Alice Adams,OU=Office,DC=test,DC=aldap
+member: CN=Bob Brown,OU=Office,DC=test,DC=aldap
+member: CN=Carol Clark,OU=Office,DC=test,DC=aldap
+member: CN=Heidi Hill,OU=Office,DC=test,DC=aldap
+member: CN=Kim King,OU=Branch,DC=test,DC=aldap
+member: CN=Leo Lee,OU=Branch,DC=test,DC=aldap
+member: CN=Outside User,CN=Users,DC=test,DC=aldap
+member: CN=Managers,CN=Users,DC=test,DC=aldap
