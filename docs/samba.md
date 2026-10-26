@@ -70,7 +70,8 @@ The tests read:
 Without `ALDAP_TEST_SAMBA_URL` every Samba test is skipped.
 
 Behind a TLS-intercepting proxy the image build can use a CA bundle for apt:
-`SAMBA_APT_CA=/path/to/bundle.crt SAMBA_BASE=<mirror>/ubuntu:24.04 docker compose -f deploy/samba-dc/compose.yml build`.
+`SAMBA_APT_CA=/path/to/bundle.crt deploy/samba-dc/init.sh` (copied to the build secret
+`secrets/apt_ca`, empty otherwise), then `SAMBA_BASE=<mirror>/ubuntu:24.04 docker compose -f deploy/samba-dc/compose.yml build`.
 
 ## Scenarios (SPEC §13.2)
 

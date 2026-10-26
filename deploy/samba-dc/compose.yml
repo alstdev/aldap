@@ -36,6 +36,7 @@ secrets:
   tls_cert:   { file: ./secrets/tls_cert }
   tls_key:    { file: ./secrets/tls_key }
   tls_ca:     { file: ./secrets/tls_ca }
-  # Build-time only: a CA bundle for apt behind a TLS-intercepting proxy
-  # (SAMBA_APT_CA=/path/to/bundle); /dev/null = image defaults.
-  apt_ca:     { file: "${SAMBA_APT_CA:-/dev/null}" }
+  # Build-time only: a CA bundle for apt behind a TLS-intercepting proxy, written by
+  # init.sh from SAMBA_APT_CA (empty = image defaults). Inside the project, so the
+  # build needs no extra file-system grant.
+  apt_ca:     { file: ./secrets/apt_ca }

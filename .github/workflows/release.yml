@@ -131,7 +131,7 @@ jobs:
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - uses: anchore/sbom-action/download-syft@v0
         if: steps.dhi.outputs.ok == 'true'
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@v4.1.2   # no floating v4 tag
         if: steps.dhi.outputs.ok == 'true' && env.PUBLISH == 'true'
       - name: Build (push and sign keyless on a tag)
         if: steps.dhi.outputs.ok == 'true'
@@ -163,7 +163,7 @@ jobs:
       - uses: actions/download-artifact@v4
         continue-on-error: true   # absent in a dry run without DHI secrets
         with: { name: image-sbom, path: dist/ }
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@v4.1.2
         if: env.PUBLISH == 'true'
       - name: Sign checksums (keyless)
         if: env.PUBLISH == 'true'

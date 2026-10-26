@@ -3,6 +3,7 @@
 # random passwords and a self-signed CA with one LDAPS certificate for dc1 and dc2.
 # The CA certificate is exported to testdata/samba-ca.pem for the tests.
 # Existing files are kept, so a second run reuses them; `init.sh --force` renews all.
+# SAMBA_APT_CA=/path/to/bundle.crt gives apt a CA bundle for the image build.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -34,6 +35,12 @@ if [ ! -s "${dir}/tls_ca" ]; then
   openssl x509 -req -in "${dir}/tls.csr" -CA "${dir}/tls_ca" -CAkey "${dir}/ca.key" \
     -CAcreateserial -out "${dir}/tls_cert" -days 30 -extfile "${dir}/tls.ext" 2>/dev/null
   rm -f "${dir}/tls.csr" "${dir}/tls.ext" "${dir}/tls_ca.srl"
+fi
+# Build secret for apt behind a TLS-intercepting proxy (empty: image defaults).
+if [ -n "${SAMBA_APT_CA:-}" ]; then
+  cp "$SAMBA_APT_CA" "${dir}/apt_ca"
+else
+  : > "${dir}/apt_ca"
 fi
 # The containers read the secrets as root; the tests read them as the caller.
 chmod 0600 "${dir}"/*
