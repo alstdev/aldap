@@ -223,6 +223,9 @@ type searchCtx struct {
 	hits    int
 	stale   time.Duration
 	replica bool
+	// truncated marks a post-filtered search whose candidate set from the
+	// upstream was cut at the size limit: the answer may be incomplete.
+	truncated bool
 }
 
 // Search answers a client search (SPEC §4.2). A paged request with a
@@ -502,14 +505,25 @@ func (d *Directory) groups(ctx context.Context, sc *searchCtx, name string) ([]l
 	return out, listener.Success
 }
 
-// sizeLimit applies the client sizeLimit and limits.max_result_size.
-func (d *Directory) sizeLimit(sc *searchCtx, out []listener.Entry) (listener.Result, []listener.Entry) {
+// candidateLimit is the effective size limit of a search: the smaller of
+// the client's sizeLimit and limits.max_result_size (0 = none).
+func (d *Directory) candidateLimit(sc *searchCtx) int {
 	limit := d.rules.Limits.MaxResultSize
 	if sc.req.SizeLimit > 0 && (limit <= 0 || sc.req.SizeLimit < limit) {
 		limit = sc.req.SizeLimit
 	}
+	return limit
+}
+
+// sizeLimit applies the client sizeLimit and limits.max_result_size; a
+// post-filtered search whose candidates were cut is incomplete and says so.
+func (d *Directory) sizeLimit(sc *searchCtx, out []listener.Entry) (listener.Result, []listener.Entry) {
+	limit := d.candidateLimit(sc)
 	if limit > 0 && len(out) > limit {
 		return listener.Result{Code: ldap.LDAPResultSizeLimitExceeded}, out[:limit]
+	}
+	if sc.truncated {
+		return listener.Result{Code: ldap.LDAPResultSizeLimitExceeded}, out
 	}
 	return listener.Success, out
 }
@@ -667,6 +681,9 @@ func (d *Directory) users(ctx context.Context, sc *searchCtx, rdn string) ([]lis
 			d.emitStale(sc, len(merged))
 		}
 	}
+	if sc.post != nil && len(merged) > d.candidateLimit(sc) {
+		sc.truncated = true
+	}
 	traps := len(merged)
 	for _, h := range d.rules.Honeytokens() {
 		if rdn == "" || strings.EqualFold(h.Attrs[d.rules.RDNAttr][0], rdn) {
@@ -713,8 +730,13 @@ func (d *Directory) fetchUsers(ctx context.Context, sc *searchCtx) ([]upstream.E
 		limit = sc.req.SizeLimit
 	}
 	fetch := 0
-	if limit > 0 && sc.post == nil {
-		fetch = limit + 1 // one more to detect the overflow; a post-filter needs the whole set
+	if limit > 0 {
+		// One more than the limit detects the overflow. A post-filter is
+		// evaluated on the same bounded candidate set: a search must never
+		// pull the whole directory (one filter term on memberOf or a
+		// computed attribute would otherwise cost a full scan per request);
+		// a cut candidate set is answered sizeLimitExceeded.
+		fetch = limit + 1
 	}
 	results := make([]*upstream.Result, len(d.rules.Bases))
 	errs := make([]error, len(d.rules.Bases))

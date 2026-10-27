@@ -348,6 +348,11 @@ func (r *Rules) Classify(attr string) ldapfilter.Class {
 	if i := strings.IndexByte(l, ';'); i > 0 {
 		l = l[:i]
 	}
+	if l == strings.ToLower(AttrMemberOf) && len(r.groups) == 0 {
+		// Without virtual groups nothing has a memberOf: the term is false
+		// and needs no upstream candidates.
+		return ldapfilter.Denied
+	}
 	if r.IsVirtualAttr(l) {
 		return ldapfilter.Local
 	}
