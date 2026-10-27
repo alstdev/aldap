@@ -127,6 +127,7 @@ func (b *Bus) Wrap(e Event) Record {
 	}
 	r := newRecord(e, ts, id, b.seq.Add(1), b.o.Host)
 	redactData(r.Data)
+	clipRecord(&r)
 	if b.o.HashAccounts && r.Account != "" {
 		r.AccountHash = HashAccount(b.o.Salt, r.Account)
 		r.Account = ""

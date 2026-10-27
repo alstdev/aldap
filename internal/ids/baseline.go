@@ -89,6 +89,12 @@ func (e *Engine) base(profile string) *baseline {
 
 // baselineObserve learns or checks one observation; bind marks a bind
 // (only the IP is relevant).
+// Bounds on client-controlled values kept in the baseline sets.
+const (
+	maxBaselineValue = 8192
+	maxBaselineAttrs = 64
+)
+
 func (e *Engine) baselineObserve(profile, ip, connID, base, filterNorm string, attrs []string, now time.Time, bind bool) {
 	e.mu.Lock()
 	if !e.cfg.Anomaly.Enabled {
@@ -120,8 +126,14 @@ func (e *Engine) baselineObserve(profile, ip, connID, base, filterNorm string, a
 	}
 	check(b.ips, "ip:", AnomalyNewIP, ip)
 	if !bind {
+		if len(base) > maxBaselineValue {
+			base = base[:maxBaselineValue]
+		}
 		check(b.bases, "base:", AnomalyNewBase, strings.ToLower(base))
 		check(b.filters, "filter:", AnomalyNewFilter, FilterShape(filterNorm))
+		if len(attrs) > maxBaselineAttrs {
+			attrs = attrs[:maxBaselineAttrs]
+		}
 		if len(attrs) > 0 {
 			cp := make([]string, len(attrs))
 			for i, a := range attrs {

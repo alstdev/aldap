@@ -24,6 +24,9 @@ var invalidCredentials = listener.Result{Code: ldap.LDAPResultInvalidCredentials
 // Bind authenticates a client (SPEC §4.3): anonymous, client_bind or user.
 func (d *Directory) Bind(ctx context.Context, c *listener.Conn, name string, password []byte) listener.Result {
 	start := d.now()
+	// A bind name longer than any real identifier is kept clipped: events,
+	// logs and the guard tables must not store what the client sends.
+	name = clipString(name, maxBindName)
 	// Gate (SPEC §9): locks, negative cache, lockdown and rate limits answer
 	// without touching the upstream.
 	ip := c.ClientIP()

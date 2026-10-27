@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-ldap/ldap/v3"
 
@@ -958,6 +959,41 @@ func (d *Directory) evictOldest(states map[string]*pagingState) {
 
 // ---------------------------------------------------------------- events
 
+// Bounds on client-controlled values copied into events, logs and tables
+// (SPEC §9: the ring buffer must stay bounded whatever the request carries).
+const (
+	maxEventNames = 64   // attribute names kept per list in a search event
+	maxBindName   = 1024 // bytes of a bind name kept as account
+)
+
+// clipString cuts s to at most n bytes (on a rune boundary) with a marker.
+func clipString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	const marker = "…"
+	cut := n - len(marker)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + marker
+}
+
+// clipList keeps the first n names (each clipped) and returns how many
+// were dropped.
+func clipList(list []string, n int) ([]string, int) {
+	dropped := 0
+	if len(list) > n {
+		dropped = len(list) - n
+		list = list[:n]
+	}
+	out := make([]string, len(list))
+	for i, v := range list {
+		out[i] = clipString(v, ldapfilter.DefaultMaxDNLen)
+	}
+	return out, dropped
+}
+
 // redactFilter renders the normalized filter with password values hidden.
 func redactFilter(f *ldapfilter.Filter) string {
 	if f == nil {
@@ -986,20 +1022,32 @@ func (d *Directory) emitSearch(sc *searchCtx, res listener.Result, results int) 
 	ev.UpstreamServer = sc.server
 	ev.Duration = d.now().Sub(sc.start)
 	data := map[string]any{
-		"base": sc.req.Base, "scope": sc.req.Scope.String(), "filter_norm": redactFilter(sc.filter),
+		"base": clipString(sc.req.Base, ldapfilter.DefaultMaxDNLen), "scope": sc.req.Scope.String(), "filter_norm": redactFilter(sc.filter),
 		"results": results, "upstream_queries": sc.queries, "cache_hit": sc.cacheHit(), "result_code": res.Code,
 	}
 	if sc.filter == nil {
 		data["filter_norm"] = "(invalid)"
 	}
+	// Client-controlled lists are cut (the event stays bounded whatever the
+	// request carried); the count of dropped names is kept.
+	truncated := 0
 	if len(sc.req.Attrs) > 0 {
-		data["attrs_requested"] = sc.req.Attrs
+		var n int
+		data["attrs_requested"], n = clipList(sc.req.Attrs, maxEventNames)
+		truncated += n
 	}
 	if len(sc.denied) > 0 {
-		data["attrs_denied"] = sc.denied
+		var n int
+		data["attrs_denied"], n = clipList(sc.denied, maxEventNames)
+		truncated += n
 	}
 	if len(sc.terms) > 0 {
-		data["denied_terms"] = sc.terms
+		var n int
+		data["denied_terms"], n = clipList(sc.terms, maxEventNames)
+		truncated += n
+	}
+	if truncated > 0 {
+		data["attrs_truncated"] = truncated
 	}
 	if sc.trap != "" {
 		data["honeytoken"] = sc.trap
