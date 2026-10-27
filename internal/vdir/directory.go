@@ -3,6 +3,7 @@ package vdir
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -687,7 +688,7 @@ func (d *Directory) users(ctx context.Context, sc *searchCtx, rdn string) ([]lis
 	}
 	traps := len(merged)
 	for _, h := range d.rules.Honeytokens() {
-		if rdn == "" || strings.EqualFold(h.Attrs[d.rules.RDNAttr][0], rdn) {
+		if rdn == "" || strings.EqualFold(h.First(d.rules.RDNAttr), rdn) {
 			merged = append(merged, honeytokenEntry(h))
 		}
 	}
@@ -701,13 +702,13 @@ func (d *Directory) users(ctx context.Context, sc *searchCtx, rdn string) ([]lis
 	}
 	rdns := map[string]int{}
 	for _, e := range merged {
-		rdns[strings.ToLower(e.First(d.rules.RDNAttr))]++
+		rdns[strings.ToLower(d.virtualRDN(e))]++
 	}
 	out := make([]listener.Entry, 0, len(merged))
 	for i, e := range merged {
-		collision := rdns[strings.ToLower(e.First(d.rules.RDNAttr))] > 1
+		collision := rdns[strings.ToLower(d.virtualRDN(e))] > 1
 		if collision {
-			d.log.Warn("virtual RDN collision", "rdn", e.First(d.rules.RDNAttr), "upstream_dn", e.DN)
+			d.log.Warn("virtual RDN collision", "rdn", d.virtualRDN(e), "upstream_dn", e.DN)
 		}
 		full := d.transform(e, mem, collision)
 		// Upstream entries were selected by the directory and need only the
@@ -799,15 +800,32 @@ func (d *Directory) dedupeKey(e upstream.Entry) string {
 	return "dn:" + canonicalDN(e.DN)
 }
 
+// opaqueRDN names an entry that has no rdn_attr value: the hex objectGUID
+// or, without one, a hash of the upstream DN. The real DN must never become
+// a virtual RDN (it would reveal the directory's structure to every client).
+func (d *Directory) opaqueRDN(e upstream.Entry) string {
+	if g := e.First(attrObjectGUID); g != "" {
+		return hex.EncodeToString([]byte(g))
+	}
+	sum := sha256.Sum256([]byte(canonicalDN(e.DN)))
+	return hex.EncodeToString(sum[:16])
+}
+
+// virtualRDN is the rdn_attr value of an entry, or its opaque stand-in.
+func (d *Directory) virtualRDN(e upstream.Entry) string {
+	if rdn := e.First(d.rules.RDNAttr); rdn != "" {
+		return rdn
+	}
+	d.log.Debug("entry without rdn_attr gets an opaque RDN", "rdn_attr", d.rules.RDNAttr)
+	return d.opaqueRDN(e)
+}
+
 // transform maps an upstream entry to its full virtual form (SPEC §4.2
 // step 6): virtual DN from rdn_attr, allowed attributes renamed, computed
 // attributes evaluated, object classes mapped and memberOf set from the
 // virtual groups. Masking and projection happen afterwards.
 func (d *Directory) transform(e upstream.Entry, mem *membership, collision bool) *entry {
-	rdn := e.First(d.rules.RDNAttr)
-	if rdn == "" {
-		rdn = e.DN
-	}
+	rdn := d.virtualRDN(e)
 	out := &entry{dn: d.virtualUserDN(rdn, e.First(attrObjectGUID), e.DN, collision)}
 	for _, client := range d.rules.AllowedAttrs() {
 		if d.rules.IsVirtualAttr(client) {

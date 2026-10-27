@@ -71,7 +71,7 @@ func (d *Directory) SyncReplica(ctx context.Context) (any, int, error) {
 	}
 	rd := &replicaData{mem: mem, users: make([]replicaUser, 0, len(users))}
 	for _, e := range users {
-		rdn := e.First(d.rules.RDNAttr)
+		rdn := d.virtualRDN(e)
 		rd.users = append(rd.users, replicaUser{rdn: rdn, full: d.transform(e, memberOf, mem.collides(rdn, e.DN))})
 	}
 	sort.Slice(rd.users, func(i, j int) bool { return rd.users[i].full.dn < rd.users[j].full.dn })
@@ -79,12 +79,9 @@ func (d *Directory) SyncReplica(ctx context.Context) (any, int, error) {
 }
 
 // collides reports whether an RDN value is shared by several users of the
-// set the membership was computed over (an empty RDN falls back to the DN
-// like transform does).
-func (m *membership) collides(rdn, dn string) bool {
-	if rdn == "" {
-		rdn = dn
-	}
+// set the membership was computed over (callers pass the virtual RDN, an
+// opaque one for entries without rdn_attr).
+func (m *membership) collides(rdn, _ string) bool {
 	return m.rdns[strings.ToLower(rdn)] > 1
 }
 

@@ -151,9 +151,23 @@ func (r *Rules) compileHoneytokens(name string, p *config.Profile) error {
 		}
 		h.DN = "CN=" + ldapfilter.EscapeRDNValue(cn) + "," + base
 		h.Attrs["distinguishedName"] = []string{h.DN}
+		if h.First(r.RDNAttr) == "" {
+			return fmt.Errorf("profile %s: honeytoken %q has no %s value (honeytoken_template must set rdn_attr)", name, account, r.RDNAttr)
+		}
 		r.honeytokens = append(r.honeytokens, h)
 	}
 	return nil
+}
+
+// First returns the first value of an attribute of the trap entry
+// (case-insensitive name), or "".
+func (h *Honeytoken) First(attr string) string {
+	for k, v := range h.Attrs {
+		if strings.EqualFold(k, attr) && len(v) > 0 {
+			return v[0]
+		}
+	}
+	return ""
 }
 
 // splitName derives a given name and surname from an account's user part
@@ -204,10 +218,8 @@ func (r *Rules) MatchHoneytoken(account string) *Honeytoken {
 		if strings.EqualFold(a, h.Account) || strings.EqualFold(a, h.User) {
 			return h
 		}
-		for _, v := range h.Attrs[r.RDNAttr] {
-			if strings.EqualFold(a, v) {
-				return h
-			}
+		if v := h.First(r.RDNAttr); v != "" && strings.EqualFold(a, v) {
+			return h
 		}
 	}
 	return nil

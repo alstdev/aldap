@@ -542,11 +542,12 @@ func TestSearch_UpstreamErrors(t *testing.T) {
 			t.Errorf("%v → %v", tc.err, res)
 		}
 	}
-	// Entry without rdn_attr falls back to its DN; without objectGUID the key is the DN.
+	// Entry without rdn_attr gets an opaque RDN (never its real DN); without
+	// objectGUID it is a hash of the DN.
 	d, _ := fakeDirectory(t, &fakeUp{entries: []upstream.Entry{{DN: "CN=x,DC=y", Attrs: map[string][]string{"mail": {"x@y"}}}}}, nil)
 	col := &collector{}
 	d.Search(context.Background(), &listener.Conn{}, &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(objectClass=*)"}, col)
-	if want := d.rules.UserDN("CN=x,DC=y"); len(col.entries) != 1 || col.entries[0].DN != want {
+	if len(col.entries) != 1 || strings.Contains(strings.ToLower(col.entries[0].DN), "dc=y") || !strings.HasPrefix(col.entries[0].DN, "cn=") {
 		t.Errorf("fallback rdn = %v", dns(col.entries))
 	}
 }

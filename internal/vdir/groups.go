@@ -360,11 +360,10 @@ func identityFilter(acct string) *ldapfilter.Filter {
 	return &ldapfilter.Filter{Kind: ldapfilter.Or, Children: []*ldapfilter.Filter{eq("sAMAccountName"), eq("uid")}}
 }
 
+// newMember describes a group member; an entry without an rdn_attr value
+// gets the same opaque RDN transform gives it.
 func (d *Directory) newMember(e upstream.Entry) *member {
-	mb := &member{key: d.dedupeKey(e), rdn: e.First(d.rules.RDNAttr), guid: e.First(attrObjectGUID), up: e.DN}
-	if mb.rdn == "" {
-		mb.rdn = e.DN
-	}
+	mb := &member{key: d.dedupeKey(e), rdn: d.virtualRDN(e), guid: e.First(attrObjectGUID), up: e.DN}
 	for _, a := range identityAttrs {
 		for _, v := range e.Get(a) {
 			mb.ids = append(mb.ids, strings.ToLower(v))
