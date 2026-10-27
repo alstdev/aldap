@@ -150,6 +150,18 @@ func (d *Directory) anonymousBind(b *bindCtx, name string, password []byte) (lis
 func (d *Directory) bind(ctx context.Context, b *bindCtx, password []byte) listener.Result {
 	name := strings.TrimSpace(b.name)
 	b.account = name
+	if name != "" && len(password) == 0 {
+		// An unauthenticated probe of a trap is a hit like any bind (SPEC
+		// §4.5), although it is answered as anonymous below.
+		switch bn := d.rules.NormalizeBindName(name); {
+		case d.rules.Mode == "honeypot":
+			d.honeytokenHit(b.conn, "bind", name)
+		case bn.Form != profile.FormOtherDN:
+			if h := d.rules.MatchHoneytoken(bn.Account); h != nil {
+				d.honeytokenHit(b.conn, "bind", h.Account)
+			}
+		}
+	}
 	if res, done := d.anonymousBind(b, name, password); done {
 		return res
 	}
