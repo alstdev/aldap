@@ -516,8 +516,11 @@ func TestPolicy_AllowCIDRsKeepAccountLimits(t *testing.T) {
 	}
 	// Lockdown still applies (it has its own allowlist).
 	l.SetLockdown(true, SourceAPI)
-	if v := p.PreBind(app, "user3", "y"); v.Allowed || v.Reason != ReasonLockdown {
-		t.Errorf("lockdown skipped for allow_cidrs: %+v", v)
+	if v := p.PreBind(app, "user3", "z"); !v.Allowed {
+		t.Errorf("lockdown refused allow_cidrs: %+v", v)
+	}
+	if v := p.PreBind("10.2.0.1", "user3", "y"); v.Allowed || v.Reason != ReasonLockdown {
+		t.Errorf("lockdown skipped for a foreign address: %+v", v)
 	}
 	ev.check(t)
 }

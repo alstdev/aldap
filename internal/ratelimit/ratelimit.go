@@ -556,13 +556,16 @@ func (p *Policy) Config() config.Ratelimit { return p.cfg }
 // locks, the negative cache and lockdown still apply.
 func (p *Policy) Exempt(ip string) bool { return inNets(p.allowNets, ip) }
 
-// lockdownBlocks reports whether lockdown refuses this source/account.
+// lockdownBlocks reports whether lockdown refuses this source/account. The
+// application servers of ratelimit.allow_cidrs are served during a lockdown
+// like lockdown.allow_cidrs: an attacker must not be able to switch a whole
+// application off by triggering lockdown.auto.
 func (p *Policy) lockdownBlocks(ip, account string) bool {
 	on, _ := p.l.Lockdown()
 	if !on {
 		return false
 	}
-	if inNets(p.lockdownNets, ip) {
+	if inNets(p.lockdownNets, ip) || inNets(p.allowNets, ip) {
 		return false
 	}
 	return account == "" || !p.lockdownAccts[normAccount(account)]
