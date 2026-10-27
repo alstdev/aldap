@@ -20,6 +20,15 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
+// maxBERDepth is the nesting the BER decoder accepts (SPEC §9: refuse
+// nesting deeper than 64); go-asn1-ber's default of 1000 is far more than
+// any LDAPMessage needs and gives recursive consumers less margin.
+const maxBERDepth = 64
+
+func init() {
+	ber.MaxNestingDepth = maxBERDepth
+}
+
 // Protocol constants (RFC 4511).
 const (
 	ldapVersion3 = 3
