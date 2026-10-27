@@ -80,8 +80,9 @@ func (e *entry) equal(attr, value string) bool {
 	}
 	if dnAttrs[strings.ToLower(attr)] {
 		if want, err := ldapfilter.ParseDN(value); err == nil {
-			for _, v := range e.get(attr) {
-				if got, err := ldapfilter.ParseDN(v); err == nil && got.Equal(want) {
+			w := want.Canonical()
+			for _, got := range e.canonValues(attr) {
+				if got == w {
 					return true
 				}
 			}

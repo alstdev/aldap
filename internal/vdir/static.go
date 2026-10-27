@@ -25,12 +25,38 @@ const (
 type entry struct {
 	dn    string
 	attrs []listener.Attribute
+	// dnCanon memoizes the canonical form of DN-syntax attribute values
+	// (lower-case attribute name → canonical values), so a filter with many
+	// member/memberOf terms parses every value once per entry, not per term.
+	dnCanon map[string][]string
+}
+
+// canonValues returns the canonical DN forms of the values of a DN-syntax
+// attribute, computed once per entry (match.go equal).
+func (e *entry) canonValues(attr string) []string {
+	key := strings.ToLower(attr)
+	if v, ok := e.dnCanon[key]; ok {
+		return v
+	}
+	vals := e.get(attr)
+	out := make([]string, 0, len(vals))
+	for _, v := range vals {
+		if dn, err := ldapfilter.ParseDN(v); err == nil {
+			out = append(out, dn.Canonical())
+		}
+	}
+	if e.dnCanon == nil {
+		e.dnCanon = map[string][]string{}
+	}
+	e.dnCanon[key] = out
+	return out
 }
 
 func (e *entry) add(name string, values ...string) {
 	if len(values) == 0 {
 		return
 	}
+	delete(e.dnCanon, strings.ToLower(name))
 	for i := range e.attrs {
 		if strings.EqualFold(e.attrs[i].Name, name) {
 			e.attrs[i].Values = append(e.attrs[i].Values, values...)
@@ -42,6 +68,7 @@ func (e *entry) add(name string, values ...string) {
 
 // set replaces the values of an attribute (removing it when none are given).
 func (e *entry) set(name string, values ...string) {
+	delete(e.dnCanon, strings.ToLower(name))
 	for i := range e.attrs {
 		if strings.EqualFold(e.attrs[i].Name, name) {
 			if len(values) == 0 {
