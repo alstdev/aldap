@@ -116,6 +116,10 @@ type Directory struct {
 
 	memMu sync.Mutex
 	mem   *membership
+
+	// ids caches the canonical identity of presented bind names (rekey).
+	idMu sync.Mutex
+	ids  map[string]identityEntry
 }
 
 var _ listener.Handler = (*Directory)(nil)

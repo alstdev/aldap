@@ -187,11 +187,52 @@ type Limiter struct {
 	buckets   map[string]*bucket
 	negative  map[string]time.Time
 	delays    map[string]int
+	// pending counts the binds admitted to the upstream whose outcome is
+	// not recorded yet, per account ("a:"), source address ("i:") and
+	// (account, password) pair ("p:"), so that parallel attempts cannot
+	// exceed the failure budget before the first answer arrives.
+	pending map[string]*pending
+	// relocks remembers recent account locks: a re-lock doubles the
+	// duration and one failure right after an expiry locks again.
+	relocks   map[string]relock
 	lat       latencies
 	lockdown  bool
 	lockSrc   string
 	attackIPs map[string]struct{}
 	tarpitted int
+}
+
+// pendingTTL bounds how long an in-flight reservation counts when its
+// outcome is never recorded (a connection that died mid-bind).
+const pendingTTL = 2 * time.Minute
+
+// relockMemory is how long a lock makes the next lock of the key longer.
+const relockMemory = 24 * time.Hour
+
+// maxLockDuration caps the escalated account lock.
+const maxLockDuration = 24 * time.Hour
+
+// pending holds the start times of in-flight binds under one key.
+type pending struct {
+	ts []time.Time
+}
+
+func (p *pending) count(now time.Time) int {
+	cut := now.Add(-pendingTTL)
+	i := 0
+	for i < len(p.ts) && p.ts[i].Before(cut) {
+		i++
+	}
+	if i > 0 {
+		p.ts = append(p.ts[:0], p.ts[i:]...)
+	}
+	return len(p.ts)
+}
+
+// relock is the lock history of an account.
+type relock struct {
+	n     int       // locks so far within relockMemory
+	until time.Time // expiry of the last lock
 }
 
 // New creates an empty limiter.
@@ -218,7 +259,8 @@ func New(o Options) *Limiter {
 	}
 	return &Limiter{o: o, ev: o.Events, log: o.Logger, now: o.Now, salt: salt,
 		ipFails: map[string]*window{}, acctFails: map[string]*window{}, ipLocks: map[string]lockEntry{}, acctLocks: map[string]lockEntry{},
-		buckets: map[string]*bucket{}, negative: map[string]time.Time{}, delays: map[string]int{}, attackIPs: map[string]struct{}{}}
+		buckets: map[string]*bucket{}, negative: map[string]time.Time{}, delays: map[string]int{}, pending: map[string]*pending{},
+		relocks: map[string]relock{}, attackIPs: map[string]struct{}{}}
 }
 
 // HashPassword returns hex(sha256(salt || password)); the password itself
@@ -231,6 +273,56 @@ func (l *Limiter) HashPassword(password []byte) string {
 }
 
 func normAccount(a string) string { return strings.ToLower(strings.TrimSpace(a)) }
+
+// AccountKey is the key an account is counted under: trimmed and
+// lower-cased, with the realm of a UPN (`user@realm`) and the domain of a
+// `DOMAIN\user` name removed, so that every form of one account shares its
+// failure budget, lock and negative cache. A DN (a client_bind.dn) is kept
+// whole. allow_accounts, lockdown.allow_accounts and the API use the same
+// function, so an entry may be written in any form.
+func AccountKey(name string) string {
+	a := normAccount(name)
+	if strings.ContainsRune(a, '=') {
+		return a
+	}
+	if i := strings.IndexByte(a, '@'); i > 0 {
+		a = a[:i]
+	}
+	if i := strings.LastIndexByte(a, '\\'); i >= 0 {
+		a = a[i+1:]
+	}
+	return a
+}
+
+// evictBatch removes about one percent of a full table (at least one
+// entry), the entries least worth keeping first, so that a flood of keys
+// can neither grow the table nor make it refuse new keys.
+func evictBatch[V any](m map[string]V, less func(a, b V) bool) {
+	n := len(m) / 100
+	if n < 1 {
+		n = 1
+	}
+	type kv struct {
+		k string
+		v V
+	}
+	all := make([]kv, 0, len(m))
+	for k, v := range m {
+		all = append(all, kv{k, v})
+	}
+	sort.Slice(all, func(i, j int) bool { return less(all[i].v, all[j].v) })
+	for i := 0; i < n && i < len(all); i++ {
+		delete(m, all[i].k)
+	}
+}
+
+// windowLast is the newest timestamp of a window (zero when empty).
+func windowLast(w *window) time.Time {
+	if w == nil || len(w.ts) == 0 {
+		return time.Time{}
+	}
+	return w.ts[len(w.ts)-1]
+}
 
 // LockIP implements the directory's Locker: a later expiry replaces an
 // earlier one; a lock event is emitted.
@@ -273,9 +365,10 @@ func (l *Limiter) lock(target, key string, until time.Time, source string, failu
 		return
 	}
 	if !ok && len(m) >= l.o.MaxEntries {
-		l.mu.Unlock()
-		l.log.Warn("ratelimit: lock table full, lock not recorded", "target", target)
-		return
+		// Never drop a lock: make room by dropping the locks that expire
+		// first (expired ones among them).
+		l.log.Warn("ratelimit: lock table full, evicting the locks that expire first", "target", target)
+		evictBatch(m, func(a, b lockEntry) bool { return a.until.Before(b.until) })
 	}
 	m[key] = lockEntry{until: until, source: source, failures: failures, profile: profile, reason: reason}
 	// The failures are consumed by the lock: counting restarts after expiry.
@@ -467,6 +560,16 @@ func (l *Limiter) Sweep(now time.Time, maxWindow time.Duration) {
 			delete(l.buckets, k)
 		}
 	}
+	for k, p := range l.pending {
+		if p.count(now) == 0 {
+			delete(l.pending, k)
+		}
+	}
+	for k, r := range l.relocks {
+		if now.After(r.until.Add(relockMemory)) {
+			delete(l.relocks, k)
+		}
+	}
 	l.o.Metrics.SetLocks(len(l.ipLocks), len(l.acctLocks))
 	l.mu.Unlock()
 	for _, e := range exp {
@@ -500,10 +603,10 @@ func (l *Limiter) Policy(profile string, cfg config.Ratelimit) (*Policy, error) 
 		return nil, fmt.Errorf("ratelimit.lockdown.allow_cidrs: %w", err)
 	}
 	for _, a := range cfg.AllowAccounts {
-		p.allowAccts[normAccount(a)] = true
+		p.allowAccts[AccountKey(a)] = true
 	}
 	for _, a := range cfg.Lockdown.AllowAccounts {
-		p.lockdownAccts[normAccount(a)] = true
+		p.lockdownAccts[AccountKey(a)] = true
 	}
 	p.lockCode = ldap.LDAPResultInvalidCredentials
 	if cfg.LockResponse == "busy" {
@@ -624,26 +727,189 @@ func (p *Policy) PreBind(ip, account, pwHash string) Verdict {
 			return p.refuse(ReasonAccountLocked, p.lockCode)
 		}
 	}
-	if acct != "" && pwHash != "" && p.cfg.NegativeCacheTTL > 0 {
-		p.l.mu.Lock()
-		until, ok := p.l.negative[acct+"\x00"+pwHash]
-		if ok && !now.Before(until) {
-			delete(p.l.negative, acct+"\x00"+pwHash)
-			ok = false
-		}
-		p.l.mu.Unlock()
-		if ok {
-			return p.refuse(ReasonNegativeCache, ldap.LDAPResultInvalidCredentials)
-		}
+	if acct != "" && pwHash != "" && p.cfg.NegativeCacheTTL > 0 && p.negativeHit(acct, pwHash, now) {
+		return p.refuse(ReasonNegativeCache, ldap.LDAPResultInvalidCredentials)
+	}
+	if v, ok := p.reserve(ip, acct, pwHash, exempt, now); !ok {
+		return v
 	}
 	if exempt {
 		return Verdict{Allowed: true}
 	}
 	if ip != "" && !p.take("bind:"+ip, now, p.cfg.IP.BindRPS, p.cfg.IP.BindBurst) {
+		p.release(ip, acct, pwHash, exempt)
 		return p.refuse(ReasonRateLimited, ldap.LDAPResultBusy)
 	}
 	if v, ok := p.tarpit(ip); ok {
+		if !v.Allowed {
+			p.release(ip, acct, pwHash, exempt)
+		}
 		return v
+	}
+	return Verdict{Allowed: true}
+}
+
+// negativeHit reports whether (account, password) failed recently; an
+// expired entry is dropped.
+func (p *Policy) negativeHit(acct, pwHash string, now time.Time) bool {
+	p.l.mu.Lock()
+	defer p.l.mu.Unlock()
+	until, ok := p.l.negative[acct+"\x00"+pwHash]
+	if ok && !now.Before(until) {
+		delete(p.l.negative, acct+"\x00"+pwHash)
+		return false
+	}
+	return ok
+}
+
+// pendingKeys are the reservation keys of one bind (empty when not kept).
+func (p *Policy) pendingKeys(ip, acct, pwHash string, exempt bool) (acctKey, pairKey, ipKey string) {
+	if acct != "" && !p.allowAccts[acct] {
+		acctKey = "a:" + acct
+		if pwHash != "" && p.cfg.NegativeCacheTTL > 0 {
+			pairKey = "p:" + acct + "\x00" + pwHash
+		}
+	}
+	if ip != "" && !exempt {
+		ipKey = "i:" + ip
+	}
+	return acctKey, pairKey, ipKey
+}
+
+// reserve admits a bind to the upstream only while the failures already
+// recorded plus the binds still in flight stay below the budget of the
+// account and the source; the same (account, password) pair is admitted
+// once at a time. The caller must release the reservation through PostBind
+// (or release on a later refusal). It fails closed when the table is full.
+func (p *Policy) reserve(ip, acct, pwHash string, exempt bool, now time.Time) (Verdict, bool) {
+	acctKey, pairKey, ipKey := p.pendingKeys(ip, acct, pwHash, exempt)
+	l := p.l
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	count := func(k string) int {
+		if k == "" {
+			return 0
+		}
+		if pe := l.pending[k]; pe != nil {
+			return pe.count(now)
+		}
+		return 0
+	}
+	if acctKey != "" && p.cfg.Account.MaxFailures > 0 {
+		w := l.acctFails[acct]
+		if w != nil {
+			w.prune(now, p.cfg.Account.Window.D())
+		}
+		if len(windowTS(w))+count(acctKey) >= p.accountBudget(acct, now) {
+			return p.refuse(ReasonRateLimited, p.lockCode), false
+		}
+	}
+	if pairKey != "" && count(pairKey) > 0 {
+		return p.refuse(ReasonNegativeCache, ldap.LDAPResultInvalidCredentials), false
+	}
+	if ipKey != "" && p.cfg.IP.MaxFailures > 0 {
+		w := l.ipFails[ip]
+		if w != nil {
+			w.prune(now, p.cfg.IP.Window.D())
+		}
+		if len(windowTS(w))+count(ipKey) >= p.cfg.IP.MaxFailures {
+			return p.refuse(ReasonRateLimited, p.lockCode), false
+		}
+	}
+	for _, k := range []string{acctKey, pairKey, ipKey} {
+		if k == "" {
+			continue
+		}
+		pe := l.pending[k]
+		if pe == nil {
+			if len(l.pending) >= l.o.MaxEntries {
+				for kk, pp := range l.pending {
+					if pp.count(now) == 0 {
+						delete(l.pending, kk)
+					}
+				}
+				if len(l.pending) >= l.o.MaxEntries {
+					// Fail closed: an unknown key with no room is refused.
+					l.log.Warn("ratelimit: in-flight table full, bind refused")
+					return p.refuse(ReasonRateLimited, p.lockCode), false
+				}
+			}
+			pe = &pending{}
+			l.pending[k] = pe
+		}
+		pe.ts = append(pe.ts, now)
+	}
+	return Verdict{Allowed: true}, true
+}
+
+func windowTS(w *window) []time.Time {
+	if w == nil {
+		return nil
+	}
+	return w.ts
+}
+
+// release gives back the reservation of one bind; the caller holds no lock.
+func (p *Policy) release(ip, acct, pwHash string, exempt bool) {
+	acctKey, pairKey, ipKey := p.pendingKeys(ip, acct, pwHash, exempt)
+	l := p.l
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, k := range []string{acctKey, pairKey, ipKey} {
+		if pe := l.pending[k]; k != "" && pe != nil && len(pe.ts) > 0 {
+			pe.ts = pe.ts[1:]
+			if len(pe.ts) == 0 {
+				delete(l.pending, k)
+			}
+		}
+	}
+}
+
+// accountBudget is the number of failures that locks acct now: the
+// configured maximum, or one while the account is on probation right after
+// a lock expired (2 × lock_duration), so that an attacker who waits for the
+// expiry cannot restart with a full budget inside the directory's lockout
+// observation window. The caller holds mu.
+func (p *Policy) accountBudget(acct string, now time.Time) int {
+	if r, ok := p.l.relocks[acct]; ok && now.Before(r.until.Add(2*p.cfg.Account.LockDuration.D())) {
+		return 1
+	}
+	return p.cfg.Account.MaxFailures
+}
+
+// Rekey moves the reservation of an admitted bind from the presented
+// account key to the resolved one (the directory learns the canonical
+// account only after a lookup) and re-checks the lock and the negative
+// cache under the resolved key. When it refuses, the reservation is
+// released and the caller must not call PostBind.
+func (p *Policy) Rekey(ip, from, to, pwHash string) Verdict {
+	if !p.cfg.Enabled {
+		return Verdict{Allowed: true}
+	}
+	f, t := normAccount(from), normAccount(to)
+	if f == t || t == "" {
+		return Verdict{Allowed: true}
+	}
+	exempt := p.Exempt(ip)
+	now := p.l.now()
+	p.release("", f, pwHash, exempt)
+	refuse := func(v Verdict) Verdict {
+		p.release(ip, "", "", exempt)
+		return v
+	}
+	if p.lockdownBlocks(ip, t) {
+		return refuse(p.refuse(ReasonLockdown, p.lockCode))
+	}
+	if !p.allowAccts[t] {
+		if _, locked := p.l.AccountLocked(t, now); locked {
+			return refuse(p.refuse(ReasonAccountLocked, p.lockCode))
+		}
+	}
+	if pwHash != "" && p.cfg.NegativeCacheTTL > 0 && p.negativeHit(t, pwHash, now) {
+		return refuse(p.refuse(ReasonNegativeCache, ldap.LDAPResultInvalidCredentials))
+	}
+	if v, ok := p.reserve("", t, pwHash, exempt, now); !ok {
+		return refuse(v)
 	}
 	return Verdict{Allowed: true}
 }
@@ -661,7 +927,9 @@ func (p *Policy) take(key string, now time.Time, rps, burst int) bool {
 	b, ok := l.buckets[key]
 	if !ok {
 		if len(l.buckets) >= l.o.MaxEntries {
-			return true
+			// Make room by dropping the buckets idle the longest; a full
+			// table must not switch the limit off.
+			evictBatch(l.buckets, func(a, b *bucket) bool { return a.last.Before(b.last) })
 		}
 		b = &bucket{}
 		l.buckets[key] = b
@@ -670,30 +938,65 @@ func (p *Policy) take(key string, now time.Time, rps, burst int) bool {
 }
 
 // Cacheable bind failure reasons: a retry with the same password cannot
-// succeed, so the pair is remembered (SPEC §3.4 negative_cache_ttl).
+// succeed, so the pair is remembered (SPEC §3.4 negative_cache_ttl). The
+// same reasons are the ones counted against the account: the attempt
+// reached the directory (or the mock) with a password. An unauthenticated
+// bind (reason anonymous) never leaves ALDAP and an upstream outage
+// (upstream_error) is not the account's fault, so neither locks it.
 var cacheableReasons = map[string]bool{"invalid_password": true, "unknown_account": true, "disabled": true, "locked_in_ad": true, "expired": true, "must_change": true, "not_member": true}
+
+// ReasonUpstreamError is the bind_fail reason of a directory failure.
+const reasonUpstreamError = "upstream_error"
 
 // PostBind records the outcome of a bind and returns how long the answer
 // must be delayed (progressive delay and constant-time failure); elapsed is
-// the time the bind already took.
+// the time the bind already took. It releases the reservation of PreBind
+// (or Rekey), so it must be called exactly once per admitted bind.
 func (p *Policy) PostBind(ip, account, pwHash string, ok bool, reason string, elapsed time.Duration) time.Duration {
 	if !p.cfg.Enabled {
 		return 0
 	}
 	acct := normAccount(account)
+	p.release(ip, acct, pwHash, p.Exempt(ip))
 	if ok {
 		p.recordSuccess(ip, acct, elapsed)
 		return 0
 	}
 	now := p.l.now()
-	ipCount, acctCount, delayN, p95 := p.recordFailure(ip, acct, pwHash, reason, now)
+	ipCount, acctCount, delayN, p95, budget := p.recordFailure(ip, acct, pwHash, reason, now)
 	if ipCount >= p.cfg.IP.MaxFailures && p.cfg.IP.MaxFailures > 0 {
 		p.l.lock(TargetIP, ip, now.Add(p.cfg.IP.LockDuration.D()), SourceRatelimit, ipCount, p.profile, "")
 	}
-	if acctCount >= p.cfg.Account.MaxFailures && p.cfg.Account.MaxFailures > 0 {
-		p.l.lock(TargetAccount, acct, now.Add(p.cfg.Account.LockDuration.D()), SourceRatelimit, acctCount, p.profile, "")
+	if acctCount >= budget && p.cfg.Account.MaxFailures > 0 && cacheableReasons[reason] {
+		p.l.lock(TargetAccount, acct, now.Add(p.accountLockDuration(acct, now)), SourceRatelimit, acctCount, p.profile, "")
 	}
 	return p.failureDelay(delayN, p95, elapsed)
+}
+
+// accountLockDuration doubles the configured lock for every lock of the
+// account within relockMemory (capped at maxLockDuration) and records it.
+func (p *Policy) accountLockDuration(acct string, now time.Time) time.Duration {
+	l := p.l
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	d := p.cfg.Account.LockDuration.D()
+	r, ok := l.relocks[acct]
+	if ok && now.After(r.until.Add(relockMemory)) {
+		r, ok = relock{}, false
+	}
+	if !ok && len(l.relocks) >= l.o.MaxEntries {
+		evictBatch(l.relocks, func(a, b relock) bool { return a.until.Before(b.until) })
+	}
+	for i := 0; i < r.n && d < maxLockDuration; i++ {
+		d *= 2
+	}
+	if d > maxLockDuration {
+		d = maxLockDuration
+	}
+	r.n++
+	r.until = now.Add(d)
+	l.relocks[acct] = r
+	return d
 }
 
 // recordSuccess keeps the latency sample and clears the counters of the
@@ -710,33 +1013,46 @@ func (p *Policy) recordSuccess(ip, acct string, elapsed time.Duration) {
 }
 
 // recordFailure updates the failure windows, the progressive-delay counter
-// and the negative cache; it returns the counts the caller locks on.
-func (p *Policy) recordFailure(ip, acct, pwHash, reason string, now time.Time) (ipCount, acctCount, delayN int, p95 time.Duration) {
+// and the negative cache; it returns the counts the caller locks on and the
+// account budget in force.
+func (p *Policy) recordFailure(ip, acct, pwHash, reason string, now time.Time) (ipCount, acctCount, delayN int, p95 time.Duration, budget int) {
 	l := p.l
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if ip != "" && !p.Exempt(ip) {
+	if ip != "" && !p.Exempt(ip) && reason != reasonUpstreamError {
 		ipCount = addFailure(l.ipFails, ip, now, p.cfg.IP.Window.D(), l.o.MaxEntries)
+		if len(l.delays) >= l.o.MaxEntries {
+			if _, ok := l.delays[ip]; !ok {
+				evictBatch(l.delays, func(int, int) bool { return true })
+			}
+		}
 		l.delays[ip]++
 		delayN = l.delays[ip]
 	}
-	if acct != "" && !p.allowAccts[acct] {
+	budget = p.accountBudget(acct, now)
+	if acct != "" && !p.allowAccts[acct] && cacheableReasons[reason] {
 		acctCount = addFailure(l.acctFails, acct, now, p.cfg.Account.Window.D(), l.o.MaxEntries)
 	}
-	if acct != "" && pwHash != "" && cacheableReasons[reason] && p.cfg.NegativeCacheTTL > 0 && len(l.negative) < l.o.MaxEntries {
+	if acct != "" && pwHash != "" && cacheableReasons[reason] && p.cfg.NegativeCacheTTL > 0 {
+		if len(l.negative) >= l.o.MaxEntries {
+			evictBatch(l.negative, func(a, b time.Time) bool { return a.Before(b) })
+		}
 		l.negative[acct+"\x00"+pwHash] = now.Add(p.cfg.NegativeCacheTTL.D())
 	}
-	return ipCount, acctCount, delayN, l.lat.p95()
+	return ipCount, acctCount, delayN, l.lat.p95(), budget
 }
 
-// addFailure records one failure in the window of key and returns the count.
+// addFailure records one failure in the window of key and returns the
+// count. A full table drops the windows idle the longest instead of
+// forgetting the new failure.
 func addFailure(m map[string]*window, key string, now time.Time, span time.Duration, maxEntries int) int {
 	w := m[key]
 	if w == nil {
-		w = &window{}
-		if len(m) < maxEntries {
-			m[key] = w
+		if len(m) >= maxEntries {
+			evictBatch(m, func(a, b *window) bool { return windowLast(a).Before(windowLast(b)) })
 		}
+		w = &window{}
+		m[key] = w
 	}
 	return w.add(now, span)
 }

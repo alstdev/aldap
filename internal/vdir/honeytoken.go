@@ -28,6 +28,10 @@ type Guard interface {
 	HashPassword(password []byte) string
 	// PreBind decides whether a bind may go to the upstream.
 	PreBind(ip, account, pwHash string) ratelimit.Verdict
+	// Rekey moves an admitted bind from the presented account key to the
+	// resolved one and re-checks it; a refusal means the bind must be
+	// answered as blocked without PostBind.
+	Rekey(ip, from, to, pwHash string) ratelimit.Verdict
 	// PostBind records the outcome and returns how long to delay the answer.
 	PostBind(ip, account, pwHash string, ok bool, reason string, elapsed time.Duration) time.Duration
 	// PreSearch decides whether a search may be served.
@@ -52,6 +56,9 @@ func (noGuard) HashPassword(password []byte) string {
 	return fmt.Sprintf("%x", sha256.Sum256(password))
 }
 func (noGuard) PreBind(string, string, string) ratelimit.Verdict {
+	return ratelimit.Verdict{Allowed: true}
+}
+func (noGuard) Rekey(string, string, string, string) ratelimit.Verdict {
 	return ratelimit.Verdict{Allowed: true}
 }
 func (noGuard) PostBind(string, string, string, bool, string, time.Duration) time.Duration { return 0 }
