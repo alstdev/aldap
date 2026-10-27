@@ -12,6 +12,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -288,17 +289,71 @@ func (ca *CA) Issue(sans SANs, kt KeyType, now time.Time, validity time.Duration
 
 // WriteKeyPair writes a certificate PEM (0644) and its private key (0600).
 // The key file is written first so that a partially written pair never
-// has a certificate without a key.
+// has a certificate without a key. Both are written to a fresh temporary
+// file (O_EXCL, the final mode) and renamed into place, so a pre-existing
+// file with wider permissions or a symbolic link planted at the path is
+// replaced, never written through.
 func WriteKeyPair(certPath, keyPath string, certPEM []byte, key crypto.Signer) error {
 	keyPEM, err := MarshalKeyPEM(key)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+	if err := writeFileAtomic(keyPath, keyPEM, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", keyPath, err)
 	}
-	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil { //nolint:gosec // certificates are public
+	if err := writeFileAtomic(certPath, certPEM, 0o644); err != nil { //nolint:gosec // certificates are public
 		return fmt.Errorf("write %s: %w", certPath, err)
+	}
+	return nil
+}
+
+// writeFileAtomic creates a new file next to path with mode, writes data,
+// syncs it and renames it over path. A symbolic link or an existing file
+// at path is replaced by the new inode; nothing is ever written through a
+// link. The directory must exist.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	var f *os.File
+	var tmp string
+	for i := 0; i < 16; i++ {
+		var buf [8]byte
+		if _, err := rand.Read(buf[:]); err != nil {
+			return fmt.Errorf("random name: %w", err)
+		}
+		tmp = filepath.Join(dir, "."+filepath.Base(path)+"."+hex.EncodeToString(buf[:])+".tmp")
+		var err error
+		f, err = os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode) //nolint:gosec // random name under the CA directory
+		if err == nil {
+			break
+		}
+		if !os.IsExist(err) {
+			return err
+		}
+	}
+	if f == nil {
+		return errors.New("could not create a temporary file")
+	}
+	cleanup := func(err error) error {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		return cleanup(err)
+	}
+	if err := f.Chmod(mode); err != nil { // independent of the umask
+		return cleanup(err)
+	}
+	if err := f.Sync(); err != nil {
+		return cleanup(err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
 	}
 	return nil
 }
