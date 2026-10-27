@@ -204,16 +204,49 @@ func (e *Engine) src(ip string) *source {
 	return s
 }
 
-// evictSource drops the least recently seen source; the caller holds mu.
+// evictSource makes room in the source table. About one percent of the
+// sources go at once, the least interesting first: fewest recorded
+// attempts, then least recently seen. Sources taking part in an active
+// attack are never evicted, so an attacker cannot wipe their own history
+// by presenting many fresh addresses (IPv6 rotation, PROXY headers). The
+// caller holds mu.
 func (e *Engine) evictSource() {
-	var oldest string
-	var at time.Time
+	type cand struct {
+		ip string
+		s  *source
+	}
+	cands := make([]cand, 0, len(e.sources))
 	for ip, s := range e.sources {
-		if oldest == "" || s.lastSeen.Before(at) {
-			oldest, at = ip, s.lastSeen
+		if e.inActiveAttack(ip) {
+			continue
+		}
+		cands = append(cands, cand{ip, s})
+	}
+	sort.Slice(cands, func(i, j int) bool {
+		a, b := cands[i].s, cands[j].s
+		if len(a.attempts) != len(b.attempts) {
+			return len(a.attempts) < len(b.attempts)
+		}
+		return a.lastSeen.Before(b.lastSeen)
+	})
+	n := len(e.sources) / 100
+	if n < 1 {
+		n = 1
+	}
+	for i := 0; i < n && i < len(cands); i++ {
+		delete(e.sources, cands[i].ip)
+	}
+}
+
+// inActiveAttack reports whether ip is one of the sources of an active
+// attack; the caller holds mu.
+func (e *Engine) inActiveAttack(ip string) bool {
+	for _, a := range e.attacks {
+		if a.ips[ip] {
+			return true
 		}
 	}
-	delete(e.sources, oldest)
+	return false
 }
 
 // Bind feeds one bind outcome to the detectors.
