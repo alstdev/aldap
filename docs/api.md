@@ -67,7 +67,7 @@ All answers are JSON except `GET /v1/config` (`application/toml`), `/metrics` (P
 ### Locks
 
 `POST /v1/locks {"target": "ip"|"account", "key": "...", "duration": "1h", "reason": "..."}` → `201` with the
-lock. IP keys are stored canonically (`::ffff:192.0.2.7` → `192.0.2.7`), accounts lower-case; `duration`
+lock. IP keys are stored canonically (`::ffff:192.0.2.7` → `192.0.2.7`), accounts under the key binds are counted under (`ratelimit.AccountKey`: lower-case, realm of a UPN and domain of `DOMAIN\user` removed — `Alice@corp.local`, `CORP\alice` and `alice` are one lock, for `POST` and `DELETE` alike); `duration`
 defaults to `15m`, at most `8760h`. An existing lock that lasts longer is kept. `DELETE` → `204` or `404`.
 
 ### Events and SSE

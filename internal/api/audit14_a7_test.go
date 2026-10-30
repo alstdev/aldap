@@ -9,6 +9,7 @@ package api
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -610,5 +611,39 @@ func TestAudit14_A7_LocksAndStreamInputs(t *testing.T) {
 	}
 	if w := e.do("GET", "/v1/indicators?format=plain", tokLocksR, ""); w.Code != 200 || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") {
 		t.Errorf("plain indicators: %d %q", w.Code, w.Header().Get("Content-Type"))
+	}
+}
+
+// FP-6 (final pass, High): POST /v1/locks stored an account key as
+// strings.ToLower(key), while binds are counted under ratelimit.AccountKey
+// (realm and domain removed): an IPS blocking "alice@corp.local" — the form
+// events report — locked a key no bind ever used.
+func TestAudit14_FP6_AccountLockKeyIsTheBindKey(t *testing.T) {
+	e := newEnv(t, nil)
+	for _, in := range []string{"Alice.Adams@test.aldap", `TEST\alice.adams`, " alice.adams ", "ALICE.ADAMS"} {
+		body, _ := json.Marshal(map[string]string{"target": "account", "key": in, "duration": "1h"})
+		w := e.do("POST", "/v1/locks", tokAdmin, string(body))
+		if w.Code != http.StatusCreated {
+			t.Fatalf("lock %q: %d %s", in, w.Code, w.Body.String())
+		}
+		if l := decode[lock](t, w); l.Key != ratelimit.AccountKey(in) || l.Key != "alice.adams" {
+			t.Errorf("lock %q stored as %q, want alice.adams", in, l.Key)
+		}
+	}
+	if n := len(e.lim.Locks()); n != 1 {
+		t.Errorf("four spellings of one account made %d locks", n)
+	}
+	// Unlocking works with any spelling too.
+	if w := e.do("DELETE", "/v1/locks/account/Alice.Adams@test.aldap", tokAdmin, ""); w.Code != http.StatusNoContent {
+		t.Errorf("unlock by UPN: %d", w.Code)
+	}
+	if n := len(e.lim.Locks()); n != 0 {
+		t.Errorf("%d locks left", n)
+	}
+	for _, bad := range []string{`\`, "@"} {
+		body, _ := json.Marshal(map[string]string{"target": "account", "key": bad})
+		if w := e.do("POST", "/v1/locks", tokAdmin, string(body)); w.Code != http.StatusCreated && w.Code != http.StatusBadRequest {
+			t.Errorf("key %q: %d", bad, w.Code)
+		}
 	}
 }

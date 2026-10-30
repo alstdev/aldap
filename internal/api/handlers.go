@@ -178,7 +178,12 @@ func lockKey(target, key string) (string, error) {
 		if key == "" || len(key) > 512 {
 			return "", errors.New("key must be 1–512 characters")
 		}
-		return strings.ToLower(key), nil
+		// The key the bind path counts the account under: any form of the
+		// name (UPN, DOMAIN\user, bare) reaches the same lock.
+		if key = ratelimit.AccountKey(key); key == "" {
+			return "", errors.New("key does not name an account")
+		}
+		return key, nil
 	}
 	return "", fmt.Errorf("target %q: use ip or account", target)
 }

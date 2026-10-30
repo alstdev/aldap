@@ -525,7 +525,8 @@ func TestLocks_CreateListDeleteLockdown(t *testing.T) {
 		t.Fatalf("account lock: %d %s", w.Code, w.Body.String())
 	}
 	ls := decode[[]lock](t, e.do("GET", "/v1/locks", tokLocksR, ""))
-	if len(ls) != 1 || ls[0].Key != `test\jdoe` || !ls[0].Until.Equal(e.clk.now().Add(DefaultLockDuration)) {
+	// The key is the one binds are counted under (FP-6): no domain, no realm.
+	if len(ls) != 1 || ls[0].Key != "jdoe" || !ls[0].Until.Equal(e.clk.now().Add(DefaultLockDuration)) {
 		t.Fatalf("locks = %+v", ls)
 	}
 	if w := e.do("DELETE", "/v1/locks/account/TEST%5CJDoe", tokLocksW, ""); w.Code != http.StatusNoContent {
