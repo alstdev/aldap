@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -68,6 +69,68 @@ func TestActionsPinnedBySHA(t *testing.T) {
 				continue
 			}
 			t.Errorf("%s: %q is not pinned to a commit SHA", filepath.Base(f), m[1])
+		}
+	}
+}
+
+// TestSeccompCoversObservedSyscalls: deploy/seccomp.json must allow every
+// syscall a static Go binary made under strace for `aldap check` and a
+// listening `aldap run`, plus the ones runc needs to start the container
+// (statx, arch_prctl, setgroups-free user setup). The previous profile lacked
+// these, so docker-compose.yml's seccomp:./deploy/seccomp.json container
+// never started (audit A9-1). Verified by running the plain image under the
+// profile (docs/AUDIT.md).
+func TestSeccompCoversObservedSyscalls(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "deploy", "seccomp.json")) //nolint:gosec // repository file
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prof struct {
+		DefaultAction string `json:"defaultAction"`
+		Syscalls      []struct {
+			Names  []string `json:"names"`
+			Action string   `json:"action"`
+			Args   []any    `json:"args"`
+		} `json:"syscalls"`
+	}
+	if err := json.Unmarshal(b, &prof); err != nil {
+		t.Fatal(err)
+	}
+	if prof.DefaultAction == "SCMP_ACT_ALLOW" {
+		t.Fatal("defaultAction must deny")
+	}
+	allowed := map[string]bool{}
+	for _, s := range prof.Syscalls {
+		if s.Action != "SCMP_ACT_ALLOW" {
+			continue
+		}
+		for _, n := range s.Names {
+			allowed[n] = true
+		}
+	}
+	observed := strings.Fields(`accept4 access arch_prctl bind brk clone close connect dup3 epoll_create1 epoll_ctl
+		epoll_pwait eventfd2 execve exit_group faccessat2 fchmodat fcntl fstat futex getegid geteuid getgid getpid
+		getppid getrandom getsockname getsockopt gettid getuid listen madvise mmap mprotect munmap nanosleep
+		newfstatat openat pidfd_open pidfd_send_signal pipe2 prctl pread64 prlimit64 read readlinkat renameat
+		restart_syscall rseq rt_sigaction rt_sigprocmask rt_sigreturn sched_getaffinity sched_yield set_robust_list
+		set_tid_address setsockopt sigaltstack socket statfs tgkill uname unlinkat waitid write`)
+	for _, n := range observed {
+		if !allowed[n] {
+			t.Errorf("syscall %s is used by aldap but not allowed by deploy/seccomp.json", n)
+		}
+	}
+	for _, bad := range []string{"ptrace", "mount", "umount2", "bpf", "keyctl", "add_key", "setns", "unshare", "userfaultfd",
+		"process_vm_readv", "process_vm_writev", "kexec_load", "init_module", "finit_module", "reboot", "perf_event_open", "iopl", "ioperm"} {
+		if allowed[bad] {
+			t.Errorf("dangerous syscall %s is allowed", bad)
+		}
+	}
+	// socket is limited to AF_UNIX, AF_INET and AF_INET6 (no AF_NETLINK, AF_PACKET).
+	for _, s := range prof.Syscalls {
+		for _, n := range s.Names {
+			if n == "socket" && len(s.Args) == 0 {
+				t.Error("socket is allowed for every address family")
+			}
 		}
 	}
 }
