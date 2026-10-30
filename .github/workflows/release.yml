@@ -44,6 +44,8 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           if [ "$EVENT" = push ] && [[ "$REF" == refs/tags/v* ]]; then
+            # A tag name is attacker-influenced text (git allows $, ;, backticks in refnames).
+            [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z.-]+)?$ ]] || { echo "::error::tag $REF_NAME is not a version tag vMAJOR.MINOR.PATCH[-suffix]"; exit 1; }
             { echo "publish=true"; echo "version=${REF_NAME}"; echo "notes=${REF_NAME}"; } >> "$GITHUB_OUTPUT"
           else
             { echo "publish=false"; echo "version=v0.0.0-dryrun.${SHA::12}"; echo "notes=Unreleased"; } >> "$GITHUB_OUTPUT"
@@ -56,8 +58,8 @@ jobs:
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with: { go-version-file: go.mod, cache: true }
       - run: go vet ./... && make test
 
@@ -70,25 +72,30 @@ jobs:
     needs: plan
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with: { go-version-file: go.mod, cache: true }
       - name: Release notes from CHANGELOG.md
-        run: scripts/release-notes.sh "${{ needs.plan.outputs.notes }}" > release-notes.md
+        env:
+          NOTES: ${{ needs.plan.outputs.notes }}
+        run: scripts/release-notes.sh "$NOTES" > release-notes.md
       - run: mkdir -p dist
       # Before the build, so the SBOM describes the source modules only.
       - name: SBOM (CycloneDX, Go modules of the source)
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           path: .
           format: cyclonedx-json
           output-file: dist/aldap_${{ needs.plan.outputs.version }}_sbom.cdx.json
           upload-artifact: false
           upload-release-assets: false
-      - run: make build VERSION=${{ needs.plan.outputs.version }}
+      - name: Build
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: make build VERSION="$VERSION"
       - name: Checksums
         run: cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-dist
           path: |
@@ -118,20 +125,20 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "::warning::DHI_USERNAME/DHI_TOKEN secrets not set, DHI image skipped in the dry run"
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: steps.dhi.outputs.ok == 'true'
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
         if: steps.dhi.outputs.ok == 'true'
         with: { driver: docker }
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         if: steps.dhi.outputs.ok == 'true'
         with: { registry: dhi.io, username: "${{ env.DHI_USERNAME }}", password: "${{ env.DHI_TOKEN }}" }
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         if: steps.dhi.outputs.ok == 'true' && env.PUBLISH == 'true'
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
-      - uses: anchore/sbom-action/download-syft@v0
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
         if: steps.dhi.outputs.ok == 'true'
-      - uses: sigstore/cosign-installer@v4.1.2   # no floating v4 tag
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         if: steps.dhi.outputs.ok == 'true' && env.PUBLISH == 'true'
       - name: Build (push and sign keyless on a tag)
         if: steps.dhi.outputs.ok == 'true'
@@ -143,7 +150,7 @@ jobs:
           else
             NO_SIGN=1 ./build.sh --dhi
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: steps.dhi.outputs.ok == 'true'
         with: { name: image-sbom, path: "dist/sbom-*.cdx.json" }
 
@@ -158,26 +165,28 @@ jobs:
     env:
       PUBLISH: ${{ needs.plan.outputs.publish }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with: { name: release-dist }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         continue-on-error: true   # absent in a dry run without DHI secrets
         with: { name: image-sbom, path: dist/ }
-      - uses: sigstore/cosign-installer@v4.1.2
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         if: env.PUBLISH == 'true'
       - name: Sign checksums (keyless)
         if: env.PUBLISH == 'true'
         run: cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
       - name: Dry run summary
         if: env.PUBLISH != 'true'
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           {
-            echo "## Release dry run ${{ needs.plan.outputs.version }}"
+            echo "## Release dry run $VERSION"
             echo; echo '```'; ls -l dist/; echo '```'
             echo; echo "### Notes (CHANGELOG [Unreleased], first 40 lines)"; head -n 40 release-notes.md
           } >> "$GITHUB_STEP_SUMMARY"
           (cd dist && sha256sum -c SHA256SUMS)
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         if: env.PUBLISH == 'true'
         with:
           files: dist/*
