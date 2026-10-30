@@ -2,14 +2,15 @@
 
 Оновлюється наприкінці кожного етапу (5–10 рядків). Читати першим після `CLAUDE.md`.
 
-## Stage 14 — аудит безпеки і відповідності ТЗ (у роботі, 2026-10-30)
+## Stage 14 — аудит безпеки і відповідності ТЗ (завершено 2026-10-30; PR у main відкрито, не злито)
 - Зроблено: аудит 10 областей А окремими субагентами, кожна знахідка відтворена тестом (`TestAudit14_*`); 5 High і більшість Medium/Low виправлені (`sec:` коміти + пакет у `stage-14: wip`); `docs/AUDIT.md`, `docs/THREAT_MODEL.md`, `docs/TRACEABILITY.md` (373 вимоги, 49 сценаріїв), рядки в DECISIONS, запис у CHANGELOG.
 - Перевірено руками: новий `deploy/seccomp.json` — контейнер плоского образу стартує з `--read-only --cap-drop ALL --user 65532`, старий — ні.
 - Відкрито (Low/прийнято): digest-піни DHI, ruleset тегів GitHub, `image`-job на PR, відтворюваність збірки (див. AUDIT, «Залишкові ризики»).
-- НЕ виконано: фінальний незалежний прохід (субагент лише з кодом і SPEC.md), прогони fuzz і samba через `workflow_dispatch` (у сесії немає доступу до запуску workflow — зробити вручну), PR у main (не зливати).
+- Фінальний незалежний прохід виконано (субагент лише з кодом і SPEC.md; його worktree був від `main`, тож PoC перевірено на поточній гілці): виправлено FP-1 (Critical: пошук без bind), FP-2, FP-6, FP-7b; FP-8 прийнято з WARN; FP-9, FP-10 не підтверджено.
+- НЕ виконано (потрібні дії вручну): прогони fuzz і samba через `workflow_dispatch` (у сесії немає доступу до запуску workflow); `govulncheck`, `licenses`, `shellcheck` — у GitHub CI на PR.
 - Середовище: `vuln.go.dev` заблокований (govulncheck лише в CI), `dhi.io` недоступний; Docker daemon піднімається вручну.
 - Локально зелено: gofmt, vet, lint 0, windows-ctl, unit/integration `-race` (govulncheck, licenses, shellcheck — лише GitHub CI, див. AUDIT); виправлено флак таймінг-оракула: поріг паддінгу `client_bind` тепер ковзне середнє реальних перевірок (`Rules.observeClientVerify`), `testdir.Counts.UserBinds()` відокремлює bind'и користувачів від сервісних.
-- Зупинився: після `make ci` локально; далі — фінальний прохід, PR.
+- Зупинився: PR відкрито. Далі — рев'ю людиною, запуск fuzz/samba вручну, ручний чекліст із `docs/AUDIT.md`; digest-піни DHI, `image`-job на PR, SOURCE_DATE_EPOCH — відкриті Low/Medium (прийнято).
 
 ## Stage 13 — Samba AD, DHI, реліз (завершено 2026-10-26)
 - Зроблено: `deploy/samba-dc/` (2 незалежні DC, LDIF + `provision.py`, паролі й CA генерує `init.sh` у git-ignored `secrets/`, CA → `testdata/samba-ca.pem`), `make integration-samba`, `cmd/aldap/samba_test.go` (8 тестів: Virola, bind-форми, lock + `badPwdCount`=3, негативний кеш, recon, honeytoken, PROXY, failover, webhook HMAC, SSE, `check --online`) — локально зелено за ~15 с; `.github/workflows/samba.yml` (≤ 15 хв).

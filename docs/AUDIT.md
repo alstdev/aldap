@@ -16,13 +16,13 @@
 
 | Серйозність | Знайдено | Виправлено | Прийнято / відкрито |
 |---|---|---|---|
-| Critical | 0 | — | — |
-| High | 5 | 5 | 0 |
-| Medium | 21 | 19 (A3-5 частково) | 2 (A9-3, A9-4) |
+| Critical | 1 (FP-1, фінальний прохід) | 1 | 0 |
+| High | 7 (5 у проходах А + FP-2, FP-6) | 7 | 0 |
+| Medium | 23 (21 + FP-7b, FP-8) | 20 (A3-5 частково; FP-7b) | 3 (A9-3, A9-4, FP-8 — прийнято, WARN) |
 | Low | 25 | 21 (A10-11 частково) | 4 (A9-5, A9-7, A10-10, A10-14) |
 | Info | перелік нижче | — | — |
 
-Критичних знахідок немає. Усі High виправлені. Виправлення пройшли тести торкнутих пакетів; повний `make ci`, фінальний незалежний прохід і прогони fuzz/samba через `workflow_dispatch` на момент написання **не виконані** (див. «Статус етапу»). Знахідки A1-1, A5-1, A5-2, A3-2, A9-1 виправлені окремими комітами `sec:`; решта — окремими `sec:` комітами за темою або (A1-5, A1-6, A2-1, A6-3…A6-5, A7-1…A7-3, A8-2, A8-3, A9-1 у частині профілю, A10-*) у коміті `stage-14: wip`, який об'єднав пакет виправлень перед розбиттям.
+Одна Critical (FP-1: пошук без bind читав увесь віртуальний каталог) знайдена фінальним незалежним проходом і виправлена; усі Critical/High виправлені окремими `sec:` комітами з регресійними тестами, що падали до виправлення. Локально зелено: `gofmt`, `go vet`, `golangci-lint` (0), `windows-ctl`, unit і integration під `-race`. Не виконано в сесії: прогони fuzz і samba через `workflow_dispatch`, `govulncheck`, `licenses`, `shellcheck` (див. «Статус етапу»).
 
 ## Знахідки
 
@@ -172,14 +172,24 @@
 | FP-8 | Medium → прийнято + WARN | `internal/vdir/bind.go`, `internal/config` | Bind за UPN/`DOMAIN\user`/sAM не застосовує `filter`/`exclude_filter` при `require_membership=false` (дефолт); форма віртуального DN застосовує. За SPEC §4.3 це задум. | `TestFinalPass_ExcludedAccountCanBind` (відтворюється, поведінка за ТЗ) | Прийнято в `DECISIONS`; `aldap check`/валідація попереджає, коли `exclude_filter` або нестандартний `filter` задані без `require_membership = true` (`TestValidate_MembershipWarningScope`). Ручний чекліст: профілі з `exclude_filter` мають вмикати `require_membership` |
 | FP-9 | — | `internal/vdir/bind.go` | **Не підтверджено.** PoC порівнював ключ guard до identity lookup для чотирьох форм; після `Rekey` ключ канонічний. Повний шлях: 5 написань одного акаунта (UPN, bare, `DOMAIN\user`, віртуальний DN при `rdn_attr=cn`, UPN у верхньому регістрі) дають рівно 3 спроби до каталогу при `max_failures=3`. | `TestAudit14_FP9_FourSpellingsOneBudget` | не потрібне |
 
-## Статус етапу (станом на запис)
+Не підтверджено (код-рев'ю субагента без PoC; тест, що падає, не написано, у таблицю знахідок не входять):
+
+- Блокування акаунта без урахування IP — DoS «3 невдачі з будь-якого IP на 15 хв» (за задумом SPEC §9: блок ALDAP раніше за lockout AD; пом'якшення — `allow_accounts`, `ratelimit.allow_cidrs`).
+- Honeytoken-bind блокує IP на 24 год: спільний IP застосунку, якого немає в `ratelimit.allow_cidrs`, ставить застосунок в outage (відомий компроміс, описаний у `docs/security.md`).
+- Змішані local+upstream терми в `Or/Not` дають повний пейджинг (на поточному коді обмежено `limit+1`, A3-2); накопичення upstream-відповідей у replica sync.
+- `events.hash_accounts` хешує лише поле `account`; `data.key`, `data.account`, `filter_norm` лишаються відкритим текстом.
+- `intrusion.honeytoken.enabled=false` лишає lock на 24 год (`vdir.New` підставляє дефолт).
+- IP-ключі лімітів — per-/128: IPv6-ротація обходить IP-ліміти (залишковий ризик, див. нижче).
+- CI: `golangci-lint@latest`/`go-licenses@latest` у Makefile, `version: latest` в golangci-lint-action, образи `:latest` у compose; `release.yml` на `pull_request` дає job `image` доступ до `DHI_TOKEN` (A9-5). Субагент читав `main`, де Actions були на плаваючих тегах — на гілці аудиту вони закріплені за SHA (A9-2).
+
+## Статус етапу
 
 | Вимога ТЗ | Статус |
 |---|---|
-| Critical/High виправлені окремими `sec:` комітами з регресійним тестом | виконано (5 High; A9-1 — `4f133cf`) |
-| Medium виправлені або прийняті з обґрунтуванням | виконано (2 прийнято: A9-3, A9-4) |
-| `docs/THREAT_MODEL.md`, `docs/AUDIT.md`, `docs/TRACEABILITY.md` | виконано (THREAT_MODEL — до перегляду після фінального проходу) |
-| повний `make ci` | частково локально: `gofmt`, `go vet` (з тегом `integration`), `golangci-lint` (0 зауважень), `windows-ctl`, unit `-race`, integration `-race` — зелені. Не виконано в сесії: `govulncheck` (`vuln.go.dev` недоступний), `licenses` (go-licenses падає на Go 1.26: «net/http/httptest does not have module info»; `go.mod` відносно `main` не змінений), `shellcheck` (не встановлений; shell-скрипти відносно `main` не змінені). Ці три кроки мають пройти в GitHub CI на PR |
-| фінальний незалежний прохід (субагент лише з кодом і SPEC.md) | **не виконано** |
-| fuzz і samba через `workflow_dispatch` | **не виконано** (у цій сесії немає доступу до запуску workflow) |
-| PR у main | **не створено** |
+| Critical/High виправлені окремими `sec:` комітами з регресійним тестом | виконано (1 Critical + 7 High; FP-1, FP-2, FP-6 — коміти `471d973`, `0e6b49f`, `8ffffb3`) |
+| Medium виправлені або прийняті з обґрунтуванням | виконано (прийнято: A9-3, A9-4, FP-8) |
+| `docs/THREAT_MODEL.md`, `docs/AUDIT.md`, `docs/TRACEABILITY.md` | виконано |
+| Фінальний незалежний прохід (субагент лише з кодом і SPEC.md) | виконано; знайдено 1 Critical + 2 High + 2 Medium, що відтворюються; решта — вже виправлене, не підтверджене або прийняте (розділ вище) |
+| Повний `make ci` локально | `gofmt`, `go vet` (з тегом `integration`), `golangci-lint` 0, `windows-ctl`, unit `-race` (20 пакетів), integration `-race` (20 пакетів) — зелені. Не виконано в сесії: `govulncheck` (`vuln.go.dev` недоступний), `licenses` (go-licenses падає на Go 1.26: «net/http/httptest does not have module info»; `go.mod` відносно `main` не змінений), `shellcheck` (не встановлений; shell-скрипти відносно `main` не змінені). Ці три кроки мають пройти в GitHub CI на PR |
+| Нічний fuzz і samba через `workflow_dispatch` | **не виконано** — у сесії немає доступу до запуску workflow; запустити вручну (Actions → fuzz, Actions → samba, гілка `claude/epic-fermat-fniysn`). Локально: `FuzzParseMessage` 30 с чисто після `scanBER` |
+| PR у `main` | відкрито; не зливається агентом |

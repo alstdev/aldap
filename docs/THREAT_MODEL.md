@@ -74,7 +74,7 @@
 | Tampering | downgrade: bind без TLS при `starttls_required` | ✅ `confidentialityRequired` на bind і search (крім RootDSE) |
 | Repudiation | з'єднання без `session_summary`/без IP | ✅ подія на кожне з'єднання; PROXY дає реальний IP |
 | Information disclosure | діагностичні повідомлення з деталями upstream/стеками | ✅ фіксовані короткі рядки; panic → лише тип |
-| DoS | оголошена довжина > реальна, гігантська довжина, глибина BER, slowloris, флуд з'єднань (T1) | ✅ `readMessage` відкидає до читання тіла; first-packet 5 s; idle timeout; `max_conns_per_ip`; `max_connections`; handshake timeout |
+| DoS | оголошена довжина > реальна, гігантська довжина, глибина BER, slowloris, флуд з'єднань (T1) | ✅ `readMessage` відкидає до читання тіла; first-packet 5 s; idle timeout; `max_conns_per_ip`; `max_connections`; handshake timeout; `scanBER` до декодера (глибина 64, ≤ 10 000 елементів — FP-2) |
 | Elevation | обробка write-операцій | ✅ dispatch → `deny` без виклику Handler |
 
 ### 4.2 `internal/vdir` + `internal/profile` + `internal/ldapfilter` (віртуальний каталог)
@@ -82,6 +82,7 @@
 | Загроза | Сценарій | Контроль |
 |---|---|---|
 | Spoofing | unauthenticated bind (DN + порожній пароль) як сесія (T1) | ✅ `anonymousBind` → `invalidCredentials`, upstream не викликається |
+| Elevation | пошук віртуального дерева без bind або після невдалого bind (T1) | ✅ `requireBind` → `strongAuthRequired` + `op_denied{search, not_bound}`; RootDSE/subschema/honeypot відкриті (FP-1) |
 | Spoofing | різні форми імені одного акаунта → різні ключі lock (T1) | ⚠️ UPN/`DOMAIN\u`/`u` — один ключ; віртуальний DN — ключ за `rdn_attr` (AUDIT) |
 | Tampering | ін'єкція у фільтр до upstream через RDN/bind name (T1, T2) | ✅ AST + серіалізатор RFC 4515; DN RFC 4514 |
 | Tampering | значення атрибутів з AD (T6, T7) у віртуальному DN | ✅ escape RDN; колізії → суфікс objectGUID |
@@ -95,7 +96,7 @@
 
 | Загроза | Сценарій | Контроль |
 |---|---|---|
-| Spoofing | обхід через паралельні з'єднання (T1) | ✅/⚠️ див. AUDIT (гонка PreBind/PostBind) |
+| Spoofing | обхід через паралельні з'єднання (T1) | ✅ резервації в `PreBind` (A5-1); таблиці евікують пакетно, не fail-open (A5-4, FP-7b) |
 | Tampering | reload скидає стан | ✅ `Limiter`/`Engine` живуть у процесі |
 | DoS | lockdown/tarpit проти легітимних (T1 викликає `attack_start high`) | ⚠️ `lockdown.auto=false` за замовчуванням; `lockdown.allow_cidrs` окремий ключ; tarpit поважає `allow_cidrs` |
 | DoS | lock акаунта жертви 3 невірними паролями (T1) | ⚠️ властивість механізму; `allow_accounts`, `lock_duration` |
