@@ -120,8 +120,80 @@ type message struct {
 	Controls []ldap.Control
 }
 
+// maxBERElements bounds the TLV elements of one message. The decoder
+// allocates a packet tree of ~370 bytes per element, so a 1 MiB request of
+// 2-byte attribute names would cost ~190 MiB before any limit is checked;
+// no LDAP request an application sends needs more than a few hundred.
+const maxBERElements = 10000
+
+// scanBER walks the TLV structure of one message without allocating and
+// refuses what the decoder must never see: indefinite or truncated lengths,
+// nesting of maxBERDepth or more (as ber.MaxNestingDepth), and more than
+// maxBERElements elements.
+func scanBER(b []byte) error {
+	n := 0
+	return scanTLV(b, 0, &n)
+}
+
+func scanTLV(b []byte, depth int, n *int) error {
+	for len(b) > 0 {
+		if depth >= maxBERDepth { // an element at this depth, as in ber.readPacket
+			return fmt.Errorf("nesting depth %d exceeds maximum %d", depth, maxBERDepth)
+		}
+		if *n++; *n > maxBERElements {
+			return fmt.Errorf("more than %d BER elements", maxBERElements)
+		}
+		constructed := b[0]&0x20 != 0
+		i := 1
+		if b[0]&0x1f == 0x1f { // high tag number: base-128 digits
+			for {
+				if i >= len(b) || i > 5 {
+					return errors.New("bad tag")
+				}
+				more := b[i]&0x80 != 0
+				i++
+				if !more {
+					break
+				}
+			}
+		}
+		if i >= len(b) {
+			return errors.New("truncated length")
+		}
+		l := int(b[i])
+		i++
+		switch {
+		case l == 0x80:
+			return errors.New("indefinite length")
+		case l > 0x80:
+			octets := l & 0x7f
+			if octets > 4 || i+octets > len(b) {
+				return errors.New("bad length")
+			}
+			l = 0
+			for _, c := range b[i : i+octets] {
+				l = l<<8 | int(c)
+			}
+			i += octets
+		}
+		if l < 0 || l > len(b)-i {
+			return errors.New("length exceeds the message")
+		}
+		if constructed {
+			if err := scanTLV(b[i:i+l], depth+1, n); err != nil {
+				return err
+			}
+		}
+		b = b[i+l:]
+	}
+	return nil
+}
+
 // parseMessage decodes the envelope: messageID, protocolOp and controls.
 func parseMessage(raw []byte) (*message, error) {
+	if err := scanBER(raw); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrMalformed, err)
+	}
 	p, err := ber.DecodePacketErr(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMalformed, err)

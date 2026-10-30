@@ -126,9 +126,9 @@ func TestAudit14_A3_BERDepth10000NoCrash(t *testing.T) {
 	}
 }
 
-// A 1 MiB wide OR filter is decompiled to text before any filter limit is
-// checked (max_filter_len applies to the text in vdir only). Measures the
-// CPU cost a single request costs the listener.
+// A 1 MiB wide OR filter (~110k terms) is refused by the element cap before
+// the decoder builds a packet tree for it or the filter is decompiled
+// (FP-2); a filter of the size max_filter_len allows still parses.
 func TestAudit14_A3_WideORFilterCost(t *testing.T) {
 	// Each (cn=x) is 9 bytes on the wire → ~110k terms under 1 MiB.
 	data := searchWith(1, wideOrFilter(110000))
@@ -136,45 +136,42 @@ func TestAudit14_A3_WideORFilterCost(t *testing.T) {
 		t.Fatalf("packet %d > 1 MiB", len(data))
 	}
 	start := time.Now()
-	m, err := parseRaw(data, 1<<20)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	if _, err := parseRaw(data, 1<<20); !errors.Is(err, ErrMalformed) {
+		t.Fatalf("1 MiB wide OR filter: err = %v, want ErrMalformed", err)
 	}
-	req, err := parseSearch(m.Body)
-	el := time.Since(start)
+	if el := time.Since(start); el > time.Second {
+		t.Errorf("refusal took %v", el)
+	}
+	// 450 terms ≈ the 4096 characters of max_filter_len.
+	m, err := parseRaw(searchWith(1, wideOrFilter(450)), 1<<20)
 	if err != nil {
+		t.Fatalf("parse of a normal wide filter: %v", err)
+	}
+	if _, err := parseSearch(m.Body); err != nil {
 		t.Fatalf("parseSearch: %v", err)
-	}
-	t.Logf("wide OR: %d wire bytes → %d filter chars in %v", len(data), len(req.Filter), el)
-	if el > 3*time.Second {
-		t.Errorf("decompile of one 1 MiB filter took %v", el)
 	}
 }
 
-// Attribute lists and controls are not bounded by count, only by
-// max_request_bytes: a 1 MiB request carries ~200k attribute names that
-// are all kept in SearchRequest.Attrs (and later in the search event).
-func TestAudit14_A3_AttributeListUnbounded(t *testing.T) {
-	attrs := make([]string, 150000)
-	for i := range attrs {
-		attrs[i] = "a"
-	}
+// Attribute lists are bounded by the element cap, not only by
+// max_request_bytes: a 1 MiB request used to keep ~200k attribute names in
+// SearchRequest.Attrs (FP-2).
+func TestAudit14_A3_AttributeListBounded(t *testing.T) {
 	filter, _ := ldap.CompileFilter("(cn=*)")
-	data := searchWith(1, filter, attrs...)
-	if len(data) > 1<<20 {
-		t.Fatalf("packet %d > 1 MiB", len(data))
+	huge := make([]string, 150000)
+	for i := range huge {
+		huge[i] = "a"
 	}
-	m, err := parseRaw(data, 1<<20)
+	if _, err := parseRaw(searchWith(1, filter, huge...), 1<<20); !errors.Is(err, ErrMalformed) {
+		t.Errorf("150000 attribute names: err = %v, want ErrMalformed", err)
+	}
+	few := huge[:2000]
+	m, err := parseRaw(searchWith(1, filter, few...), 1<<20)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	req, err := parseSearch(m.Body)
-	if err != nil {
-		t.Fatalf("parseSearch: %v", err)
-	}
-	t.Logf("%d attribute names accepted from one request", len(req.Attrs))
-	if len(req.Attrs) != 150000 {
-		t.Errorf("attrs = %d", len(req.Attrs))
+	if err != nil || len(req.Attrs) != 2000 {
+		t.Errorf("2000 attribute names: %d, %v", len(req.Attrs), err)
 	}
 }
 
