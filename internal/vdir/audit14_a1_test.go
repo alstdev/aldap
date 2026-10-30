@@ -6,7 +6,9 @@ package vdir
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -397,21 +399,33 @@ func TestAudit14_A1_ClientBindTimingOracle(t *testing.T) {
 			t.Fatalf("user bind: %+v", res)
 		}
 	}
+	n := 0
 	observe := func(name string) time.Duration {
 		padded = 0
+		n++ // a fresh password each time: a repeat would be a negative-cache hit
 		start := time.Now()
-		res := d.Bind(context.Background(), c, name, []byte("wrong"))
+		res := d.Bind(context.Background(), c, name, []byte(fmt.Sprintf("wrong-%d", n)))
 		if res.Code != ldap.LDAPResultInvalidCredentials {
 			t.Fatalf("bind(%q) = %+v", name, res)
 		}
 		return time.Since(start) + padded
 	}
-	other := observe("cn=svc-other,ou=services,dc=aldap")
-	client := observe(clientDN)
+	// Median of interleaved observations: one sample of a 100+ ms argon2id
+	// run jitters with the load of the machine (race detector, parallel
+	// packages), the median of three does not.
+	var others, clients []time.Duration
+	for i := 0; i < 3; i++ {
+		others = append(others, observe("cn=svc-other,ou=services,dc=aldap"))
+		clients = append(clients, observe(clientDN))
+	}
+	median := func(v []time.Duration) time.Duration {
+		sort.Slice(v, func(i, j int) bool { return v[i] < v[j] })
+		return v[len(v)/2]
+	}
+	other, client := median(others), median(clients)
 	t.Logf("observable failure latency: unknown DN = %s, client_bind.dn = %s", other, client)
-	// The failed bind on an unknown DN is padded to the measured argon2id
-	// cost; allow scheduler noise (the race detector and parallel tests
-	// make both sides jitter) but not the ~200 ms the oracle showed.
+	// The failed bind on an unknown DN is padded to the argon2id cost;
+	// allow scheduler noise but not the ~200 ms the oracle showed.
 	if diff := client - other; diff > 100*time.Millisecond && diff > client/4 {
 		t.Errorf("FINDING: a failed bind on client_bind.dn is %s slower than on an unknown DN: the service DN is enumerable by timing", client-other)
 	}

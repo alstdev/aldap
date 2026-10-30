@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alstdev/aldap/internal/config"
 	"github.com/alstdev/aldap/internal/ldapfilter"
@@ -245,5 +246,39 @@ func TestNormalizeBindName(t *testing.T) {
 	}
 	if got := r2.NormalizeBindName("bob"); got.Upstream != "bob" {
 		t.Errorf("bare without default domain = %+v", got)
+	}
+}
+
+// The padding floor of failed binds follows the real client_bind
+// verifications (moving average) and never exceeds 4× the probe.
+func TestClientVerifyCost_Adapts(t *testing.T) {
+	r := compile(t, testProfile(), "S3CR3T-client")
+	probe := r.ClientVerifyCost()
+	if probe <= 0 {
+		t.Fatalf("probe = %v", probe)
+	}
+	r.observeClientVerify(3 * probe)
+	if got := r.ClientVerifyCost(); got <= probe || got >= 3*probe {
+		t.Errorf("floor after one slow verification = %v (probe %v), want in (probe, 3×probe)", got, probe)
+	}
+	for i := 0; i < 64; i++ {
+		r.observeClientVerify(100 * probe)
+	}
+	if got := r.ClientVerifyCost(); got != 4*probe {
+		t.Errorf("floor under a flood = %v, want the 4× cap %v", got, 4*probe)
+	}
+	for i := 0; i < 64; i++ {
+		r.observeClientVerify(probe / 2)
+	}
+	if got := r.ClientVerifyCost(); got > probe {
+		t.Errorf("floor did not come back: %v (probe %v)", got, probe)
+	}
+	// Without a client bind the floor stays 0 and observing is a no-op.
+	p := testProfile()
+	p.ClientBind.DN = ""
+	r2 := compile(t, p, "")
+	r2.observeClientVerify(time.Second)
+	if r2.ClientVerifyCost() != 0 {
+		t.Errorf("floor without client bind = %v", r2.ClientVerifyCost())
 	}
 }

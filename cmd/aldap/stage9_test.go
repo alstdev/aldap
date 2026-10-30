@@ -148,12 +148,12 @@ func TestStage9_Replica(t *testing.T) {
 	if len(all.Entries) != 19 || r.clientSearches() != n0 {
 		t.Fatalf("replica search: %d entries, %d upstream queries", len(all.Entries), r.clientSearches()-n0)
 	}
-	binds := r.dc.Calls().Binds
+	binds := r.dc.Calls().UserBinds()
 	u := r.ldaps(t)
 	if err := u.Bind("alice.adams@test.aldap", "alice.adams-pass"); err != nil {
 		t.Fatalf("user bind with the upstream up: %v", err)
 	}
-	if r.dc.Calls().Binds == binds {
+	if r.dc.Calls().UserBinds() == binds {
 		t.Error("user bind did not reach the upstream")
 	}
 

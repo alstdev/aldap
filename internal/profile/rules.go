@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/alstdev/aldap/internal/config"
@@ -47,8 +48,12 @@ type Rules struct {
 	// ClientBindDN is the service login of the application (nil = none).
 	ClientBindDN *ldapfilter.DN
 	clientHash   *PasswordHash
-	// clientVerifyCost is one argon2id verification on this machine.
-	clientVerifyCost time.Duration
+	// clientVerifyCost is one argon2id verification on this machine, in
+	// nanoseconds: the probe taken at compile time, then followed by the
+	// real verifications (observeClientVerify).
+	clientVerifyCost atomic.Int64
+	// clientVerifyCap bounds the adaptive floor (4× the probe).
+	clientVerifyCap int64
 	// Mode is proxy, honeypot or mock.
 	Mode string
 	// NestedGroups enables transitive membership; NestedDepth bounds the
@@ -278,7 +283,7 @@ func (r *Rules) compileClientBind(name string, cb config.ClientBind, o Options) 
 			// ClientVerifyCost); the hash path has not run argon2id yet.
 			start := time.Now()
 			r.clientHash.Verify([]byte("aldap-cost-probe"))
-			r.clientVerifyCost = time.Since(start)
+			r.setClientVerifyProbe(time.Since(start))
 		case o.ClientPassword != "":
 			params := o.Argon2
 			if params.Time == 0 {
@@ -288,7 +293,7 @@ func (r *Rules) compileClientBind(name string, cb config.ClientBind, o Options) 
 			if r.clientHash, err = HashPassword([]byte(o.ClientPassword), params); err != nil {
 				return fmt.Errorf("profile %s: client_bind.password: %w", name, err)
 			}
-			r.clientVerifyCost = time.Since(start)
+			r.setClientVerifyProbe(time.Since(start))
 		default:
 			return fmt.Errorf("profile %s: client_bind.dn is set but no password or password_hash", name)
 		}
@@ -306,13 +311,42 @@ func (r *Rules) IsClientBindDN(dn *ldapfilter.DN) bool {
 
 // VerifyClientPassword checks a client_bind password in constant time.
 func (r *Rules) VerifyClientPassword(password []byte) bool {
-	return r.clientHash != nil && r.clientHash.Verify(password)
+	if r.clientHash == nil {
+		return false
+	}
+	start := time.Now()
+	ok := r.clientHash.Verify(password)
+	r.observeClientVerify(time.Since(start))
+	return ok
+}
+
+func (r *Rules) setClientVerifyProbe(d time.Duration) {
+	r.clientVerifyCost.Store(int64(d))
+	r.clientVerifyCap = 4 * int64(d)
+}
+
+// observeClientVerify folds the duration of a real verification into the
+// padding floor (moving average, weight 1/4), so the floor follows the load
+// of the machine instead of one probe taken at compile time. The floor never
+// exceeds 4× the probe: a flood of client_bind attempts cannot make every
+// failed bind arbitrarily slow.
+func (r *Rules) observeClientVerify(d time.Duration) {
+	if r.clientVerifyCap <= 0 {
+		return
+	}
+	for {
+		old := r.clientVerifyCost.Load()
+		next := min(old-old/4+int64(d)/4, r.clientVerifyCap)
+		if r.clientVerifyCost.CompareAndSwap(old, next) {
+			return
+		}
+	}
 }
 
 // ClientVerifyCost is the measured duration of one argon2id verification
 // of the client_bind password (0 without a client bind). A failed bind on
 // any other name is padded to it, so timing does not reveal client_bind.dn.
-func (r *Rules) ClientVerifyCost() time.Duration { return r.clientVerifyCost }
+func (r *Rules) ClientVerifyCost() time.Duration { return time.Duration(r.clientVerifyCost.Load()) }
 
 // AllowedAttrs returns the client attribute names that may be returned, in
 // configuration order (attrs.allow followed by attrs.map keys).
