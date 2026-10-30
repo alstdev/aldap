@@ -68,7 +68,16 @@ func (u *Upstream) checkServer(ctx context.Context, srv ServerURL, bases []strin
 		c.SetTimeout(time.Duration(u.cfg.Timeouts.Bind))
 		if err := c.Bind(u.cfg.BindDN, u.password); err != nil {
 			reason, _ := ClassifyBindError(err)
-			return append(out, Finding{Server: url, Check: "bind", Msg: fmt.Sprintf("service bind failed: %s", reason)})
+			msg := fmt.Sprintf("service bind failed: %s", reason)
+			if reason == ReasonUpstreamError {
+				// Name the LDAP result (strongerAuthRequired = LDAP signing
+				// required: use ldaps:// or StartTLS) instead of a generic word.
+				msg = fmt.Sprintf("service bind failed: %s: %v", reason, err)
+				if ldap.IsErrorWithCode(err, ldap.LDAPResultStrongAuthRequired) || ldap.IsErrorWithCode(err, ldap.LDAPResultConfidentialityRequired) {
+					msg += " (the directory requires LDAP signing or TLS: use ldaps:// or starttls = true)"
+				}
+			}
+			return append(out, Finding{Server: url, Check: "bind", Msg: msg})
 		}
 		out = append(out, Finding{Server: url, Check: "bind", OK: true, Msg: "service bind ok"})
 	}

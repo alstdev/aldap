@@ -902,9 +902,20 @@ type pagingState struct {
 
 const pagingKey = "vdir.paging"
 
+// pagingTTL is how long an unfinished paged search keeps its merged result
+// on the connection; a client that abandons cursors cannot pin memory for
+// the life of the connection.
+const pagingTTL = 10 * time.Minute
+
 func (d *Directory) pagingStates(c *listener.Conn) map[string]*pagingState {
 	if v, ok := c.Load(pagingKey); ok {
 		if m, ok := v.(map[string]*pagingState); ok {
+			cut := d.now().Add(-pagingTTL)
+			for k, st := range m {
+				if st.created.Before(cut) {
+					delete(m, k)
+				}
+			}
 			return m
 		}
 	}

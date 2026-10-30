@@ -199,12 +199,15 @@ paths:
       x-scope: events:read
       description: |
         Server-Sent Events: "id: <seq>", "event: <type>", "data: <record JSON>"; a ": ping"
-        comment every 15 s. Resumes after Last-Event-ID (= seq) or ?since=, from the ring buffer.
+        comment every 15 s. Resumes after Last-Event-ID (= seq) or ?since=, from the ring buffer;
+        without either the stream starts with the last 1000 buffered records. At most
+        api.max_streams (default 64) streams are open at once; further requests get 503
+        too_many_streams.
       parameters:
         - { name: Last-Event-ID, in: header, schema: { type: integer } }
         - { name: since, in: query, schema: { type: integer } }
         - { name: types, in: query, schema: { type: string } }
-      responses: { "200": { description: text/event-stream }, "400": { $ref: "#/components/responses/Err" } }
+      responses: { "200": { description: text/event-stream }, "400": { $ref: "#/components/responses/Err" }, "503": { $ref: "#/components/responses/Err" } }
   /v1/lockdown:
     post:
       x-scope: locks:write

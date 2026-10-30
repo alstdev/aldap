@@ -222,7 +222,9 @@ func (c *controller) ApplyConfig(ctx context.Context, body []byte) (api.ApplyRes
 	switch {
 	case err == nil:
 		if fi, serr := os.Stat(c.path); serr == nil {
-			mode = fi.Mode().Perm()
+			// Keep the operator's mode but never wider than 0640: the file
+			// may now carry inline secrets (SPEC §3.5 warns above 0640).
+			mode = fi.Mode().Perm() & 0o640
 		}
 	case errors.Is(err, fs.ErrNotExist):
 		prev = nil
@@ -231,7 +233,7 @@ func (c *controller) ApplyConfig(ctx context.Context, body []byte) (api.ApplyRes
 	}
 	res := api.ApplyResult{}
 	if prev != nil {
-		if res.Backup, err = c.backup(prev, mode); err != nil {
+		if res.Backup, err = c.backup(prev, 0o600); err != nil {
 			return api.ApplyResult{}, readOnly(err)
 		}
 	}

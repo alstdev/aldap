@@ -47,6 +47,8 @@ type Rules struct {
 	// ClientBindDN is the service login of the application (nil = none).
 	ClientBindDN *ldapfilter.DN
 	clientHash   *PasswordHash
+	// clientVerifyCost is one argon2id verification on this machine.
+	clientVerifyCost time.Duration
 	// Mode is proxy, honeypot or mock.
 	Mode string
 	// NestedGroups enables transitive membership; NestedDepth bounds the
@@ -268,18 +270,25 @@ func (r *Rules) compileClientBind(name string, cb config.ClientBind, o Options) 
 			return fmt.Errorf("profile %s: client_bind.dn: %w", name, err)
 		}
 		switch {
-		case p.ClientBind.PasswordHash != "":
-			if r.clientHash, err = ParsePasswordHash(p.ClientBind.PasswordHash); err != nil {
+		case p.ClientBind.PasswordHash.IsSet():
+			if r.clientHash, err = ParsePasswordHash(p.ClientBind.PasswordHash.Reveal()); err != nil {
 				return fmt.Errorf("profile %s: client_bind.password_hash: %w", name, err)
 			}
+			// Measure what one verification costs on this machine (see
+			// ClientVerifyCost); the hash path has not run argon2id yet.
+			start := time.Now()
+			r.clientHash.Verify([]byte("aldap-cost-probe"))
+			r.clientVerifyCost = time.Since(start)
 		case o.ClientPassword != "":
 			params := o.Argon2
 			if params.Time == 0 {
 				params = DefaultArgon2
 			}
+			start := time.Now()
 			if r.clientHash, err = HashPassword([]byte(o.ClientPassword), params); err != nil {
 				return fmt.Errorf("profile %s: client_bind.password: %w", name, err)
 			}
+			r.clientVerifyCost = time.Since(start)
 		default:
 			return fmt.Errorf("profile %s: client_bind.dn is set but no password or password_hash", name)
 		}
@@ -299,6 +308,11 @@ func (r *Rules) IsClientBindDN(dn *ldapfilter.DN) bool {
 func (r *Rules) VerifyClientPassword(password []byte) bool {
 	return r.clientHash != nil && r.clientHash.Verify(password)
 }
+
+// ClientVerifyCost is the measured duration of one argon2id verification
+// of the client_bind password (0 without a client bind). A failed bind on
+// any other name is padded to it, so timing does not reveal client_bind.dn.
+func (r *Rules) ClientVerifyCost() time.Duration { return r.clientVerifyCost }
 
 // AllowedAttrs returns the client attribute names that may be returned, in
 // configuration order (attrs.allow followed by attrs.map keys).

@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -66,6 +67,8 @@ type Validator struct {
 	ReadFile func(string) ([]byte, error)
 	// Now defaults to time.Now.
 	Now func() time.Time
+	// globalClientCA is [tls].client_ca while profiles are validated.
+	globalClientCA string
 	// StrictFiles turns unreadable secret and certificate files into errors.
 	// Offline `aldap check` leaves it false because such files are often
 	// mounted only at run time (/run/secrets); `aldap run` sets it.
@@ -91,6 +94,7 @@ func (c *Config) Validate() error {
 // Validate runs every offline rule and returns the report.
 func (v Validator) Validate(c *Config) *Report {
 	v = v.withDefaults()
+	v.globalClientCA = c.TLS.ClientCA
 	rep := &Report{}
 	c.Server.validate("server", rep)
 	v.validateTLS("tls", &c.TLS, c.listenHosts(), rep)
@@ -106,6 +110,7 @@ func (v Validator) Validate(c *Config) *Report {
 	v.validateEvents("events", &c.Events, rep)
 	v.validateNotify("notify", &c.Notify, rep)
 	v.validateAPI("api", &c.API, rep)
+	validatePathCollisions(c, rep)
 	return rep
 }
 
@@ -156,10 +161,15 @@ func atLeast(rep *Report, path string, n, minimum int) {
 	}
 }
 
+// checkCIDRs validates an allow list. A /0 prefix is refused: it would exempt
+// every address from the limits, locks or token restriction the list guards.
 func checkCIDRs(rep *Report, path string, list []string) {
 	for i, s := range list {
 		p := fmt.Sprintf("%s[%d]", path, i)
-		if _, err := netip.ParsePrefix(s); err == nil {
+		if pfx, err := netip.ParsePrefix(s); err == nil {
+			if pfx.Bits() == 0 {
+				rep.errorf(p, "%q matches every address; an allow list must name specific networks", s)
+			}
 			continue
 		}
 		if _, err := netip.ParseAddr(s); err == nil {
@@ -399,6 +409,15 @@ func (r *Ratelimit) validate(path string, rep *Report) {
 		atLeast(rep, path+".tarpit.max_conns", r.Tarpit.MaxConns, 1)
 	}
 	checkCIDRs(rep, path+".lockdown.allow_cidrs", r.Lockdown.AllowCIDRs)
+	if r.Lockdown.Auto && len(r.Lockdown.AllowCIDRs) == 0 && len(r.Lockdown.AllowAccounts) == 0 && len(r.AllowCIDRs) == 0 {
+		rep.warnf(path+".lockdown", "auto = true with no lockdown.allow_cidrs, lockdown.allow_accounts or allow_cidrs: a high-level attack_start cuts every client off until lockdown is switched off")
+	}
+	if !r.Enabled {
+		rep.warnf(path+".enabled", "rate limiting is off: no locks, no negative cache, no lockdown; the directory takes every password guess")
+	}
+	if !r.ConstantTimeBindFail {
+		rep.warnf(path+".constant_time_bind_fail", "off: failed-bind timing reveals whether an account exists")
+	}
 }
 
 // Validate checks the section on its own.
@@ -407,6 +426,12 @@ func (i *Intrusion) Validate() error { return sectionError(i.validate, "ids") }
 func (i *Intrusion) validate(path string, rep *Report) {
 	positive(rep, path+".summary_interval", i.SummaryInterval)
 	positive(rep, path+".quiet_period", i.QuietPeriod)
+	for name, on := range map[string]bool{"spray": i.Spray.Enabled, "stuffing": i.Stuffing.Enabled, "slow_brute": i.SlowBrute.Enabled,
+		"enumeration": i.Enumeration.Enabled, "recon": i.Recon.Enabled, "anomaly": i.Anomaly.Enabled, "honeytoken": i.Honeytoken.Enabled} {
+		if !on {
+			rep.warnf(path+"."+name+".enabled", "detector is off")
+		}
+	}
 	if i.Spray.Enabled {
 		positive(rep, path+".spray.window", i.Spray.Window)
 		atLeast(rep, path+".spray.min_accounts", i.Spray.MinAccounts, 2)
@@ -453,6 +478,9 @@ func (v Validator) validateUpstream(path, name string, u *Upstream, rep *Report)
 	v.validateUpstreamServers(path, u, rep)
 	v.validateUpstreamBind(path, u, rep)
 	oneOf(rep, path+".kind", u.Kind, "ad", "generic")
+	if !u.AuditServiceAccount {
+		rep.warnf(path+".audit_service_account", "off: an over-privileged service account is not reported")
+	}
 	positive(rep, path+".health_interval", u.HealthInterval)
 	oneOf(rep, path+".health_check", u.HealthCheck, "rootdse", "bind", "search")
 	if u.HealthCheck == "search" && u.BaseDN == "" {
@@ -534,6 +562,9 @@ func (v Validator) validateProfile(path, name string, p *Profile, c *Config, rep
 		v.validateGroup(path+".groups."+g, p.Groups[g], rep)
 	}
 	atLeast(rep, path+".nested_depth", p.NestedDepth, 1)
+	if p.NestedDepth > MaxNestedDepthCeiling {
+		rep.errorf(path+".nested_depth", "%d exceeds the ceiling of %d", p.NestedDepth, MaxNestedDepthCeiling)
+	}
 	v.validateProfileCache(path, &p.Cache, rep)
 	if p.Cache.Mode != "none" && p.Mode != "" && p.Mode != "proxy" {
 		rep.warnf(path+".cache.mode", "ignored for mode = %s (no upstream to cache)", p.Mode)
@@ -611,8 +642,14 @@ func (v Validator) validateProfileMode(path string, p *Profile, c *Config, rep *
 		}
 	}
 	if p.Upstream != "" && c != nil {
-		if _, ok := c.Upstreams[p.Upstream]; !ok {
+		u, ok := c.Upstreams[p.Upstream]
+		if !ok {
 			rep.errorf(path+".upstream", "upstream %q is not defined", p.Upstream)
+		} else if p.Mode == "proxy" && p.Filter == "" && u.Kind == "generic" {
+			// AD gets the default person/user/enabled filter; a generic
+			// directory has none, so without a filter every object under
+			// the bases (service accounts, groups, devices) is a user.
+			rep.errorf(path+".filter", "required for a generic upstream (SPEC §3.4: no default filter outside kind = ad)")
 		}
 	}
 }
@@ -622,6 +659,12 @@ func (v Validator) validateProfileDirectory(path string, p *Profile, rep *Report
 		rep.errorf(path+".virtual_base", "required")
 	} else {
 		v.checkDN(rep, path+".virtual_base", p.VirtualBase)
+		vb := dnKey(p.VirtualBase)
+		for i, b := range p.Bases {
+			if bk := dnKey(b); vb == bk || strings.HasSuffix(vb, ","+bk) {
+				rep.errorf(path+".virtual_base", "%q is equal to or under bases[%d] %q: a virtual DN must not be a real one", p.VirtualBase, i, b)
+			}
+		}
 	}
 	v.checkDNList(rep, path+".bases", p.Bases)
 	v.checkFilter(rep, path+".filter", p.Filter)
@@ -646,18 +689,20 @@ func (v Validator) validateProfileBind(path string, p *Profile, rep *Report) {
 	cb := p.ClientBind
 	if cb.DN != "" {
 		v.checkDN(rep, path+".client_bind.dn", cb.DN)
-	} else if cb.PasswordSource().IsSet() || cb.PasswordHash != "" {
+	} else if cb.PasswordSource().IsSet() || cb.PasswordHash.IsSet() {
 		rep.errorf(path+".client_bind.dn", "required when client_bind.password is set")
 	}
-	if cb.PasswordHash != "" {
+	if cb.PasswordHash.IsSet() {
 		if cb.PasswordSource().IsSet() {
 			rep.errorf(path+".client_bind.password_hash", "mutually exclusive with password, password_file and password_env")
 		}
-		if !strings.HasPrefix(cb.PasswordHash, "$argon2id$") {
-			rep.errorf(path+".client_bind.password_hash", "must be an argon2id PHC string ($argon2id$v=19$m=...,t=...,p=...$salt$hash)")
+		if cb.PasswordHash.Reveal() == secret.Redacted {
+			rep.errorf(path+".client_bind.password_hash", "is the masked placeholder; a rendered configuration cannot be applied with it")
+		} else if err := ValidateArgon2PHC(cb.PasswordHash.Reveal()); err != nil {
+			rep.errorf(path+".client_bind.password_hash", "%v", err)
 		}
 	}
-	v.checkSecret(rep, path+".client_bind.password", cb.PasswordSource(), cb.DN != "" && cb.PasswordHash == "")
+	v.checkSecret(rep, path+".client_bind.password", cb.PasswordSource(), cb.DN != "" && !cb.PasswordHash.IsSet())
 	if p.AnonymousBind {
 		rep.warnf(path+".anonymous_bind", "anonymous bind is enabled")
 	}
@@ -685,8 +730,16 @@ func (v Validator) validateProfileLimits(path string, l *Limits, rep *Report) {
 	atLeast(rep, path+".limits.max_filter_len", l.MaxFilterLen, 1)
 	if l.MaxRequestBytes <= 0 {
 		rep.errorf(path+".limits.max_request_bytes", "must be positive")
+	} else if l.MaxRequestBytes > MaxRequestBytesCeiling {
+		rep.errorf(path+".limits.max_request_bytes", "%d exceeds the ceiling of %d bytes (one request is buffered in memory)", l.MaxRequestBytes, MaxRequestBytesCeiling)
+	}
+	if l.MaxFilterDepth > MaxFilterDepthCap {
+		rep.errorf(path+".limits.max_filter_depth", "%d exceeds the parser's hard cap %d", l.MaxFilterDepth, MaxFilterDepthCap)
 	}
 	atLeast(rep, path+".limits.max_conns_per_ip", l.MaxConnsPerIP, 1)
+	if l.MaxConnsPerIP > MaxConnsPerIPCeiling {
+		rep.errorf(path+".limits.max_conns_per_ip", "%d exceeds the ceiling of %d", l.MaxConnsPerIP, MaxConnsPerIPCeiling)
+	}
 	positive(rep, path+".limits.idle_timeout", l.IdleTimeout)
 	atLeast(rep, path+".limits.upstream_parallel", l.UpstreamParallel, 1)
 }
@@ -728,8 +781,15 @@ func (v Validator) validateTLSOverride(path string, t *TLSOverride, rep *Report)
 	if t.ClientAuth != nil {
 		oneOf(rep, path+".client_auth", *t.ClientAuth, "none", "request", "require")
 	}
-	if t.Mode != nil && *t.Mode == "external" && (t.Cert == nil || t.Key == nil) {
-		rep.errorf(path+".cert", "cert and key are required for mode = external")
+	if t.Mode != nil && *t.Mode == "external" {
+		if t.Cert == nil || t.Key == nil {
+			rep.errorf(path+".cert", "cert and key are required for mode = external")
+		} else {
+			v.checkCertFile(rep, path+".cert", *t.Cert, 0, nil)
+		}
+	}
+	if t.ClientAuth != nil && *t.ClientAuth != "none" && (t.ClientCA == nil || *t.ClientCA == "") && (v.globalClientCA == "") {
+		rep.errorf(path+".client_ca", "required for client_auth = %s (not set here nor in [tls])", *t.ClientAuth)
 	}
 }
 
@@ -744,6 +804,12 @@ func (v Validator) validateGroup(path string, g Group, rep *Report) {
 }
 
 func (r *RatelimitPatch) validate(path string, rep *Report) {
+	if r.Enabled != nil && !*r.Enabled {
+		rep.warnf(path+".enabled", "rate limiting is off for this profile: no locks, no negative cache; the directory takes every password guess")
+	}
+	if r.ConstantTimeBindFail != nil && !*r.ConstantTimeBindFail {
+		rep.warnf(path+".constant_time_bind_fail", "off: failed-bind timing reveals whether an account exists")
+	}
 	if r.NegativeCacheTTL != nil {
 		positive(rep, path+".negative_cache_ttl", *r.NegativeCacheTTL)
 	}
@@ -944,6 +1010,7 @@ func (v Validator) validateNotify(path string, n *Notify, rep *Report) {
 		if !oneOf(rep, p+".type", c.Type, "telegram", "virola", "email", "webhook") {
 			continue
 		}
+		checkForeignChannelKeys(rep, p, c)
 		switch c.Type {
 		case "telegram":
 			v.checkSecret(rep, p+".bot_token", c.BotTokenSource(), true)
@@ -1145,6 +1212,9 @@ func (v Validator) validateAPI(path string, a *API, rep *Report) {
 	if a.RateLimitRPS < 0 {
 		rep.errorf(path+".rate_limit_rps", "must not be negative")
 	}
+	if a.MaxStreams < 1 {
+		rep.errorf(path+".max_streams", "must be at least 1")
+	}
 	oneOf(rep, path+".client_auth", a.ClientAuth, "none", "require")
 	if a.ClientAuth == "require" && a.ClientCA == "" {
 		rep.errorf(path+".client_ca", "required for client_auth = require")
@@ -1159,6 +1229,12 @@ func (v Validator) validateAPI(path string, a *API, rep *Report) {
 	}
 	if a.Enabled {
 		v.validateAPIListen(path, a, rep)
+	} else if a.Metrics.Enabled && a.Metrics.Listen != "" {
+		// A separate metrics listener runs even with the API off.
+		hasTLS := a.TLS.Builtin || a.TLS.Cert != ""
+		if mh, _, mok := checkListen(rep, path+".metrics.listen", a.Metrics.Listen); mok && !isLoopbackHost(mh) && !hasTLS {
+			rep.errorf(path+".metrics.listen", "TLS is mandatory when the metrics listener is not loopback: set tls.builtin = true or tls.cert and tls.key")
+		}
 	}
 	names := map[string]bool{}
 	for i := range a.Tokens {
@@ -1176,11 +1252,17 @@ func (v Validator) validateAPI(path string, a *API, rep *Report) {
 
 func (v Validator) validateAPIListen(path string, a *API, rep *Report) {
 	host, _, ok := checkListen(rep, path+".listen", a.Listen)
-	if ok && !isLoopbackHost(host) && !a.TLS.Builtin && a.TLS.Cert == "" {
+	hasTLS := a.TLS.Builtin || a.TLS.Cert != ""
+	if ok && !isLoopbackHost(host) && !hasTLS {
 		rep.errorf(path+".tls", "TLS is mandatory when listen is not loopback: set tls.builtin = true or tls.cert and tls.key")
 	}
+	if a.ClientAuth == "require" && !hasTLS {
+		rep.errorf(path+".tls", "client_auth = require needs TLS: set tls.builtin = true or tls.cert and tls.key")
+	}
 	if a.Metrics.Listen != "" {
-		checkListen(rep, path+".metrics.listen", a.Metrics.Listen)
+		if mh, _, mok := checkListen(rep, path+".metrics.listen", a.Metrics.Listen); mok && !isLoopbackHost(mh) && !hasTLS {
+			rep.errorf(path+".metrics.listen", "TLS is mandatory when the metrics listener is not loopback: set tls.builtin = true or tls.cert and tls.key")
+		}
 	}
 	if a.Metrics.Enabled && a.Metrics.Public {
 		rep.warnf(path+".metrics.public", "/metrics is served without a token")
@@ -1210,4 +1292,192 @@ func sectionError(fn func(string, *Report), path string) error {
 		return nil
 	}
 	return rep
+}
+
+// Argon2id cost bounds for client_bind.password_hash (SPEC §9 defaults are
+// t=3, m=64 MiB, p=4): a hash with absurd costs would let one bind exhaust
+// the process, a weak one would make the service password crackable.
+const (
+	Argon2MinMemoryKiB = 8 * 1024
+	Argon2MaxMemoryKiB = 1024 * 1024
+	Argon2MinTime      = 1
+	Argon2MaxTime      = 16
+	Argon2MinThreads   = 1
+	Argon2MaxThreads   = 16
+)
+
+var argon2PHCRe = regexp.MustCompile(`^\$argon2id\$v=19\$m=([0-9]{1,10}),t=([0-9]{1,10}),p=([0-9]{1,3})\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$`)
+
+// ValidateArgon2PHC checks the shape and the cost bounds of an argon2id PHC
+// string ($argon2id$v=19$m=...,t=...,p=...$salt$hash). The profile package
+// parses it for real; the same bounds apply there.
+func ValidateArgon2PHC(s string) error {
+	m := argon2PHCRe.FindStringSubmatch(s)
+	if m == nil {
+		return errors.New("must be an argon2id PHC string ($argon2id$v=19$m=...,t=...,p=...$salt$hash)")
+	}
+	mem, _ := strconv.ParseUint(m[1], 10, 64)
+	t, _ := strconv.ParseUint(m[2], 10, 64)
+	p, _ := strconv.ParseUint(m[3], 10, 64)
+	return CheckArgon2Costs(mem, t, p)
+}
+
+// CheckArgon2Costs applies the argon2id cost bounds.
+func CheckArgon2Costs(memKiB, t, p uint64) error {
+	switch {
+	case memKiB < Argon2MinMemoryKiB || memKiB > Argon2MaxMemoryKiB:
+		return fmt.Errorf("argon2id m=%d KiB is outside %d..%d", memKiB, Argon2MinMemoryKiB, Argon2MaxMemoryKiB)
+	case t < Argon2MinTime || t > Argon2MaxTime:
+		return fmt.Errorf("argon2id t=%d is outside %d..%d", t, Argon2MinTime, Argon2MaxTime)
+	case p < Argon2MinThreads || p > Argon2MaxThreads:
+		return fmt.Errorf("argon2id p=%d is outside %d..%d", p, Argon2MinThreads, Argon2MaxThreads)
+	case memKiB < 8*p:
+		return fmt.Errorf("argon2id m=%d KiB is below 8*p", memKiB)
+	}
+	return nil
+}
+
+// Ceilings for resource limits (SPEC §9: every limit bounds memory, so a
+// value that cannot be meant disables the bound in practice).
+const (
+	MaxRequestBytesCeiling = 64 << 20 // one request is buffered whole
+	MaxFilterDepthCap      = 64       // ldapfilter.HardMaxDepth; kept equal by a test there
+	MaxConnsPerIPCeiling   = 65535
+	MaxNestedDepthCeiling  = 100
+)
+
+// dnKey folds a DN for suffix comparison: lower case, no spaces around separators.
+func dnKey(dn string) string {
+	parts := strings.Split(strings.ToLower(dn), ",")
+	for i, p := range parts {
+		kv := strings.SplitN(p, "=", 2)
+		for j := range kv {
+			kv[j] = strings.TrimSpace(kv[j])
+		}
+		parts[i] = strings.Join(kv, "=")
+	}
+	return strings.Join(parts, ",")
+}
+
+// checkForeignChannelKeys refuses keys of another channel type: a misplaced
+// secret would be read for nothing, and tls_insecure_skip_verify on a
+// channel that does not honour it would look like it does.
+func checkForeignChannelKeys(rep *Report, p string, c *Channel) {
+	def := DefaultChannel()
+	set := func(key string, present bool, types ...string) {
+		if !present || slices.Contains(types, c.Type) {
+			return
+		}
+		rep.errorf(p+"."+key, "not a key of a %s channel (used by %s)", c.Type, strings.Join(types, "/"))
+	}
+	set("bot_token", c.BotToken.IsSet() || c.BotTokenFile != "" || c.BotTokenEnv != "", "telegram")
+	set("chat_id", c.ChatID != "", "telegram")
+	set("parse_mode", c.ParseMode != def.ParseMode, "telegram")
+	set("api_base", c.APIBase != def.APIBase, "telegram")
+	set("base_url", c.BaseURL != "", "virola")
+	set("token", c.Token.IsSet() || c.TokenFile != "" || c.TokenEnv != "", "virola")
+	set("room_id", c.RoomID != 0, "virola")
+	set("user_id", c.UserID != 0, "virola")
+	set("path_template", c.PathTemplate != "", "virola")
+	set("tls_ca_file", c.TLSCAFile != "", "virola")
+	set("tls_insecure_skip_verify", c.TLSInsecureSkipVerify, "virola")
+	set("smtp_host", c.SMTPHost != "", "email")
+	set("smtp_port", c.SMTPPort != def.SMTPPort, "email")
+	set("tls", c.TLSMode != def.TLSMode, "email")
+	set("username", c.Username != "", "email")
+	set("password", c.Password.IsSet() || c.PasswordFile != "" || c.PasswordEnv != "", "email")
+	set("from", c.From != "", "email")
+	set("to", len(c.To) > 0, "email")
+	set("subject_template", c.SubjectTemplate != "", "email")
+	set("url", c.URL != "", "webhook")
+	set("method", c.Method != def.Method, "webhook")
+	set("headers", len(c.Headers) > 0 || c.HeadersFile != "", "webhook")
+	set("body_template", c.BodyTemplate != "", "webhook")
+	set("hmac_secret", c.HMACSecret.IsSet() || c.HMACSecretFile != "" || c.HMACSecretEnv != "", "webhook")
+}
+
+// validatePathCollisions refuses configurations where one file plays two
+// roles: a secret *_file that is a private key, salt or token file (its
+// content would be sent to the upstream as a password), or an output file
+// (events.file.path, record.file) that is any input (the daemon would
+// append events to the CA key or the configuration).
+func validatePathCollisions(c *Config, rep *Report) {
+	type named struct{ path, key string }
+	var keys, inputs, secrets, outputs []named
+	add := func(list *[]named, file, key string) {
+		if file != "" {
+			*list = append(*list, named{filepath.Clean(file), key})
+		}
+	}
+	if c.TLS.CADir != "" {
+		add(&keys, filepath.Join(c.TLS.CADir, "ca.key"), "tls.ca_dir/ca.key")
+		add(&keys, filepath.Join(c.TLS.CADir, "server.key"), "tls.ca_dir/server.key")
+		add(&inputs, filepath.Join(c.TLS.CADir, "ca.crt"), "tls.ca_dir/ca.crt")
+		add(&inputs, filepath.Join(c.TLS.CADir, "server.crt"), "tls.ca_dir/server.crt")
+	}
+	add(&keys, c.TLS.Key, "tls.key")
+	add(&inputs, c.TLS.Cert, "tls.cert")
+	add(&inputs, c.TLS.ClientCA, "tls.client_ca")
+	add(&keys, c.API.TLS.Key, "api.tls.key")
+	add(&inputs, c.API.TLS.Cert, "api.tls.cert")
+	add(&inputs, c.API.ClientCA, "api.client_ca")
+	add(&keys, c.Events.SaltFile, "events.salt_file")
+	for i := range c.API.Tokens {
+		add(&keys, c.API.Tokens[i].TokenFile, fmt.Sprintf("api.token[%d].token_file", i))
+	}
+	for _, name := range sortedKeys(c.Upstreams) {
+		u := c.Upstreams[name]
+		add(&secrets, u.BindPasswordFile, "upstream."+name+".bind_password_file")
+		add(&inputs, u.TLSCAFile, "upstream."+name+".tls_ca_file")
+	}
+	for _, name := range sortedKeys(c.Profiles) {
+		p := c.Profiles[name]
+		pp := "profile." + name
+		add(&secrets, p.ClientBind.PasswordFile, pp+".client_bind.password_file")
+		add(&inputs, p.Mock.File, pp+".mock.file")
+		if p.TLS.Key != nil {
+			add(&keys, *p.TLS.Key, pp+".tls.key")
+		}
+		if p.TLS.Cert != nil {
+			add(&inputs, *p.TLS.Cert, pp+".tls.cert")
+		}
+		if p.TLS.ClientCA != nil {
+			add(&inputs, *p.TLS.ClientCA, pp+".tls.client_ca")
+		}
+		add(&outputs, p.Record.File, pp+".record.file")
+	}
+	for i := range c.Events.Webhooks {
+		w := &c.Events.Webhooks[i]
+		add(&secrets, w.HMACSecretFile, fmt.Sprintf("events.webhook[%d].hmac_secret_file", i))
+		add(&secrets, w.HeadersFile, fmt.Sprintf("events.webhook[%d].headers_file", i))
+		add(&inputs, w.TLSCAFile, fmt.Sprintf("events.webhook[%d].tls_ca_file", i))
+	}
+	for i := range c.Notify.Channels {
+		ch := &c.Notify.Channels[i]
+		cp := fmt.Sprintf("notify.channel[%d]", i)
+		add(&secrets, ch.BotTokenFile, cp+".bot_token_file")
+		add(&secrets, ch.TokenFile, cp+".token_file")
+		add(&secrets, ch.PasswordFile, cp+".password_file")
+		add(&secrets, ch.HMACSecretFile, cp+".hmac_secret_file")
+		add(&secrets, ch.HeadersFile, cp+".headers_file")
+		add(&inputs, ch.TLSCAFile, cp+".tls_ca_file")
+	}
+	if c.Events.File.Enabled {
+		add(&outputs, c.Events.File.Path, "events.file.path")
+	}
+	for _, s := range secrets {
+		for _, k := range keys {
+			if s.path == k.path {
+				rep.errorf(s.key, "%q is %s: a private key, salt or token must not be read as this secret", s.path, k.key)
+			}
+		}
+	}
+	all := append(append(append([]named(nil), keys...), inputs...), secrets...)
+	for _, o := range outputs {
+		for _, in := range all {
+			if o.path == in.path {
+				rep.errorf(o.key, "%q is also %s: an output file must not be an input", o.path, in.key)
+			}
+		}
+	}
 }

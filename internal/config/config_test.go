@@ -256,10 +256,11 @@ servers = ["ldaps://dc.example.org"]
 	}
 	delete(files, "/etc/aldap/profiles/dup.toml")
 
+	// An included file may define only upstream/profile tables: a nested
+	// [server] (or any other global section) is refused, never followed.
 	files["/etc/aldap/profiles/bad.toml"] = "[server]\ninclude = [\"/x/*.toml\"]\n"
-	cfg, err = loadFS(t, files, nil, "/etc/aldap/aldap.toml")
-	if err != nil || len(cfg.Server.Include) != 1 {
-		t.Errorf("nested include must not be followed: err=%v include=%v", err, cfg.Server.Include)
+	if _, err = loadFS(t, files, nil, "/etc/aldap/aldap.toml"); !errors.Is(err, ErrIncludeScope) {
+		t.Errorf("nested [server] in an included file: err = %v, want ErrIncludeScope", err)
 	}
 }
 

@@ -71,6 +71,15 @@ func (u *Upstream) probe(ctx context.Context, srv ServerURL, kind string) error 
 		}
 		return nil
 	default:
+		if u.cfg.BindDN != "" {
+			// The service bind is part of the probe: a directory that
+			// answers the anonymous root DSE but refuses the service bind
+			// (LDAP signing required on plain ldap://) is down for ALDAP.
+			c.SetTimeout(time.Duration(u.cfg.Timeouts.Bind))
+			if err := c.Bind(u.cfg.BindDN, u.password); err != nil {
+				return fmt.Errorf("service bind: %w", err)
+			}
+		}
 		c.SetTimeout(time.Duration(u.cfg.Timeouts.Search))
 		res, err := c.Search(ldap.NewSearchRequest("", ldap.ScopeBaseObject, ldap.NeverDerefAliases, 1, 0, false, PresentAll, []string{"defaultNamingContext", "namingContexts"}, nil))
 		if err != nil {

@@ -8,9 +8,10 @@ import (
 
 	"github.com/alstdev/aldap/internal/config"
 	"github.com/alstdev/aldap/internal/ldapfilter"
+	"github.com/alstdev/aldap/internal/secret"
 )
 
-var fastArgon = Argon2Params{Time: 1, Memory: 1024, Threads: 1, KeyLen: 16, SaltLen: 8}
+var fastArgon = Argon2Params{Time: 1, Memory: 8192, Threads: 1, KeyLen: 16, SaltLen: 8}
 
 func testProfile() *config.Profile {
 	p := config.DefaultProfile()
@@ -92,7 +93,7 @@ func TestClientBind(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := testProfile()
-	p.ClientBind.PasswordHash = h.String()
+	p.ClientBind.PasswordHash = secret.Inline(h.String())
 	r2 := compile(t, p, "")
 	if !r2.VerifyClientPassword([]byte("from-hash")) || r2.VerifyClientPassword([]byte("wrong")) {
 		t.Error("hash form verification")
@@ -105,7 +106,7 @@ func TestArgon2_PHC(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := h.String()
-	if !strings.HasPrefix(s, "$argon2id$v=19$m=1024,t=1,p=1$") {
+	if !strings.HasPrefix(s, "$argon2id$v=19$m=8192,t=1,p=1$") {
 		t.Errorf("phc = %s", s)
 	}
 	back, err := ParsePasswordHash(s)
@@ -119,15 +120,15 @@ func TestArgon2_PHC(t *testing.T) {
 		t.Error("zero params")
 	}
 	for _, bad := range []string{
-		"", "$argon2i$v=19$m=1024,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=18$m=1024,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=19$m=1024,t=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=19$m=1024,t=1,p=1,x=2$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=19$m=1024,t=0,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=19$m=1024,t=1,p=999$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=19$m=1024,t=1,p=1$!!$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=19$m=1024,t=1,p=1$c2FsdHNhbHQ$c2hvcnQ",
-		"$argon2id$v=19$m=1024,t=1,p=1$c2FsdHNhbHQ$!!",
+		"", "$argon2i$v=19$m=8192,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=18$m=8192,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=19$m=8192,t=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=19$m=8192,t=1,p=1,x=2$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=19$m=8192,t=0,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=19$m=8192,t=1,p=999$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=19$m=8192,t=1,p=1$!!$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=19$m=8192,t=1,p=1$c2FsdHNhbHQ$c2hvcnQ",
+		"$argon2id$v=19$m=8192,t=1,p=1$c2FsdHNhbHQ$!!",
 		"$argon2id$v=19$m,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
 		"$argon2id$v=19$m=99999999999,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
 	} {

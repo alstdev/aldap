@@ -52,6 +52,14 @@ func (d *Directory) Bind(ctx context.Context, c *listener.Conn, name string, pas
 	ok := res.Code == ldap.LDAPResultSuccess
 	elapsed := d.now().Sub(start)
 	wait := d.o.Guard.PostBind(ip, b.key, pwHash, ok, string(b.reason), elapsed)
+	if !ok {
+		// A failed bind on client_bind.dn costs one argon2id verification;
+		// every other failure is padded to it so timing does not tell the
+		// service DN from an unknown one (SPEC §9).
+		if floor := d.rules.ClientVerifyCost(); floor > 0 && elapsed+wait < floor {
+			wait = floor - elapsed
+		}
+	}
 	if ok {
 		d.o.Metrics.Bind(d.rules.Name, "ok", elapsed)
 	} else {

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	ber "github.com/go-asn1-ber/asn1-ber"
 	"io"
 	"log/slog"
 	"net"
@@ -420,7 +421,32 @@ func (s *Server) handle(ctx context.Context, c *Conn, raw []byte, first bool) bo
 		g.disconnect(c, reasonReconfigured)
 		return false
 	}
+	// The raw message and the decoded BER tree may hold a password; both
+	// are zeroed once handled (SPEC §9), together with the copy the bind
+	// handler wipes.
+	defer wipeMessage(raw, msg)
 	return g.dispatch(ctx, c, msg)
+}
+
+// wipeMessage zeroes the wire bytes of a message and every value buffer of
+// its decoded BER tree.
+func wipeMessage(raw []byte, m *message) {
+	wipe(raw)
+	if m != nil {
+		wipePacket(m.Body)
+	}
+}
+
+func wipePacket(p *ber.Packet) {
+	if p == nil {
+		return
+	}
+	if p.Data != nil {
+		wipe(p.Data.Bytes())
+	}
+	for _, c := range p.Children {
+		wipePacket(c)
+	}
 }
 
 // disconnect sends the Notice of Disconnection (unavailable) of a kicked

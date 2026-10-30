@@ -11,9 +11,11 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/go-ldap/ldap/v3"
 
@@ -332,10 +334,10 @@ func eventLine(r events.Record, layout string) string {
 	if t, err := time.Parse(time.RFC3339Nano, r.TS); err == nil {
 		ts = t.UTC().Format(layout)
 	}
-	fmt.Fprintf(&b, "%s #%d %s %s", ts, r.Seq, r.Event, r.Level)
+	fmt.Fprintf(&b, "%s #%d %s %s", ts, r.Seq, safeField(r.Event), safeField(r.Level))
 	add := func(k, v string) {
 		if v != "" {
-			fmt.Fprintf(&b, " %s=%s", k, v)
+			fmt.Fprintf(&b, " %s=%s", k, safeField(v))
 		}
 	}
 	add("profile", r.Profile)
@@ -357,12 +359,22 @@ func eventLine(r events.Record, layout string) string {
 			}
 			s = string(bs)
 		}
-		if strings.ContainsAny(s, " \t\n") {
-			s = fmt.Sprintf("%q", s)
-		}
 		add(k, s)
 	}
 	return b.String()
+}
+
+// safeField renders an event value for a terminal: a value with a space
+// or any non-printable rune (CR, LF, ESC and other control characters an
+// attacker can put into a bind name) is quoted, so it cannot forge or erase
+// lines on the operator's screen.
+func safeField(s string) string {
+	for _, r := range s {
+		if r == ' ' || !unicode.IsPrint(r) {
+			return strconv.Quote(s)
+		}
+	}
+	return s
 }
 
 func cmdEvents(s *session, _ []string) error {

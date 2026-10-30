@@ -292,14 +292,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, _ *call) {
 	}
 	types := eventFilter(r)
 	out := []events.Record{}
-	for _, rec := range s.o.Bus.Since(since, 0) {
+	// Walk the ring in place: only the records answered are copied.
+	s.o.Bus.Each(since, func(rec events.Record) bool {
 		if keep(types, rec) {
 			out = append(out, rec)
-			if len(out) == limit {
-				break
-			}
 		}
-	}
+		return len(out) < limit
+	})
 	writeJSON(w, http.StatusOK, out)
 }
 

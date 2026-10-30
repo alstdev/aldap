@@ -315,7 +315,7 @@ type ClientBind struct {
 	Password     secret.Inline `toml:"password" doc:"Service password, inline (warned)."`
 	PasswordFile string        `toml:"password_file" doc:"File holding the service password."`
 	PasswordEnv  string        `toml:"password_env" doc:"Environment variable holding the service password."`
-	PasswordHash string        `toml:"password_hash" doc:"argon2id hash ($argon2id$...) of the service password; alternative to the password forms."`
+	PasswordHash secret.Inline `toml:"password_hash" doc:"argon2id hash ($argon2id$...) of the service password; alternative to the password forms. Rendered as *** like a secret."`
 }
 
 // PasswordSource returns the client bind password source.
@@ -615,6 +615,7 @@ type API struct {
 	ClientAuth   string     `toml:"client_auth" doc:"mTLS: none or require."`
 	ClientCA     string     `toml:"client_ca" doc:"CA bundle used to verify client certificates."`
 	RateLimitRPS int        `toml:"rate_limit_rps" doc:"Requests per second per client."`
+	MaxStreams   int        `toml:"max_streams" doc:"Maximum open SSE event streams (/v1/events/stream) at once."`
 	Metrics      Metrics    `toml:"metrics" doc:"Prometheus metrics."`
 	CORS         bool       `toml:"cors" doc:"CORS is disabled and cannot be enabled."`
 	Tokens       []APIToken `toml:"token" doc:"Bearer tokens ([[api.token]])."`
