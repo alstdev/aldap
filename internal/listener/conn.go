@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	ber "github.com/go-asn1-ber/asn1-ber"
 	"io"
 	"log/slog"
 	"net"
@@ -19,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	ber "github.com/go-asn1-ber/asn1-ber"
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/alstdev/aldap/internal/events"

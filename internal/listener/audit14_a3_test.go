@@ -366,7 +366,7 @@ func TestAudit14_A3_GlobalFloodCapped(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			raw, err := net.DialTimeout("tcp", ts.addr, 2*time.Second)
+			raw, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(context.Background(), "tcp", ts.addr)
 			if err != nil {
 				return
 			}
@@ -467,7 +467,7 @@ func TestAudit14_A3_StartTLSPipelinedPDUNotExecuted(t *testing.T) {
 			if resultCode(t, m) == ldap.LDAPResultSuccess {
 				tc := tls.Client(raw, ts.clientTLS())
 				_ = tc.SetDeadline(time.Now().Add(2 * time.Second))
-				if err := tc.Handshake(); err == nil {
+				if err := tc.HandshakeContext(context.Background()); err == nil {
 					// If the handshake succeeded, make sure nothing was executed.
 					_, _ = tc.Write(bindPacket(3, 3, "ok", "pw"))
 					_ = readRaw(t, bufio.NewReader(tc))
@@ -516,7 +516,7 @@ func TestAudit14_A3_StartTLSStates(t *testing.T) {
 		ts := start(t, Config{Profile: "p", Transport: TransportLDAPS})
 		raw, _ := rawConn(t, ts.addr)
 		tc := tls.Client(raw, ts.clientTLS())
-		if err := tc.Handshake(); err != nil {
+		if err := tc.HandshakeContext(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		rd := bufio.NewReader(tc)
@@ -724,6 +724,7 @@ func TestAudit14_A3_MutationSmoke(t *testing.T) {
 						_, _ = parseSearch(m.Body)
 					case ldap.ApplicationExtendedRequest:
 						_, _ = extendedName(m.Body)
+					default:
 					}
 					n++
 				}()

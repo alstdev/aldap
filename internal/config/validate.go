@@ -1236,10 +1236,14 @@ func (v Validator) validateAPI(path string, a *API, rep *Report) {
 			rep.errorf(path+".metrics.listen", "TLS is mandatory when the metrics listener is not loopback: set tls.builtin = true or tls.cert and tls.key")
 		}
 	}
+	v.validateAPITokens(path, a.Tokens, rep)
+}
+
+func (v Validator) validateAPITokens(path string, tokens []APIToken, rep *Report) {
 	names := map[string]bool{}
-	for i := range a.Tokens {
+	for i := range tokens {
 		p := fmt.Sprintf("%s.token[%d]", path, i)
-		t := &a.Tokens[i]
+		t := &tokens[i]
 		if t.Name == "" {
 			rep.errorf(p+".name", "required")
 		} else if names[t.Name] {
@@ -1316,9 +1320,12 @@ func ValidateArgon2PHC(s string) error {
 	if m == nil {
 		return errors.New("must be an argon2id PHC string ($argon2id$v=19$m=...,t=...,p=...$salt$hash)")
 	}
-	mem, _ := strconv.ParseUint(m[1], 10, 64)
-	t, _ := strconv.ParseUint(m[2], 10, 64)
-	p, _ := strconv.ParseUint(m[3], 10, 64)
+	mem, errM := strconv.ParseUint(m[1], 10, 64)
+	t, errT := strconv.ParseUint(m[2], 10, 64)
+	p, errP := strconv.ParseUint(m[3], 10, 64)
+	if errors.Join(errM, errT, errP) != nil {
+		return errors.New("argon2id cost parameters are out of range")
+	}
 	return CheckArgon2Costs(mem, t, p)
 }
 
@@ -1361,7 +1368,7 @@ func dnKey(dn string) string {
 
 // checkForeignChannelKeys refuses keys of another channel type: a misplaced
 // secret would be read for nothing, and tls_insecure_skip_verify on a
-// channel that does not honour it would look like it does.
+// channel that does not honor it would look like it does.
 func checkForeignChannelKeys(rep *Report, p string, c *Channel) {
 	def := DefaultChannel()
 	set := func(key string, present bool, types ...string) {

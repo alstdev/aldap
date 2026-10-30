@@ -26,7 +26,7 @@ import (
 )
 
 // recSearcher is a fake upstream that records every request and answers
-// with a generated user set (n users), honouring SizeLimit like the real
+// with a generated user set (n users), honoring SizeLimit like the real
 // one (which stops paging once SizeLimit entries arrived).
 type recSearcher struct {
 	mu   sync.Mutex
@@ -403,5 +403,31 @@ func TestAudit14_A3_DeepFilterOpsCost(t *testing.T) {
 	t.Logf("depth-20 NOT/AND wildcard filter (%d bytes) × 20 searches over 100 users: %v", len(f), el)
 	if el > 5*time.Second {
 		t.Errorf("deep filter pipeline too slow: %v", el)
+	}
+}
+
+// The canonical-DN cache of assertion values stays bounded and returns the
+// same answer as a direct parse, for valid and invalid values.
+func TestAudit14_A3_FilterDNCacheBounded(t *testing.T) {
+	for i := 0; i < filterDNCacheMax*2+10; i++ {
+		v := fmt.Sprintf("CN=User%d, DC=Test", i)
+		got, ok := canonicalFilterDN(v)
+		dn, err := ldapfilter.ParseDN(v)
+		if err != nil || !ok || got != dn.Canonical() {
+			t.Fatalf("%q: got (%q,%v), parse err %v", v, got, ok, err)
+		}
+	}
+	if _, ok := canonicalFilterDN("not a dn"); ok {
+		t.Error("invalid DN accepted")
+	}
+	long := "cn=" + strings.Repeat("a", filterDNCacheMaxLen) + ",dc=x"
+	if _, ok := canonicalFilterDN(long); !ok {
+		t.Error("long valid DN rejected")
+	}
+	filterDNCache.RLock()
+	n := len(filterDNCache.m)
+	filterDNCache.RUnlock()
+	if n > filterDNCacheMax {
+		t.Errorf("cache holds %d entries, max %d", n, filterDNCacheMax)
 	}
 }

@@ -3,6 +3,7 @@ package vdir
 import (
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/alstdev/aldap/internal/ldapfilter"
 )
@@ -79,8 +80,7 @@ func (e *entry) equal(attr, value string) bool {
 		return false
 	}
 	if dnAttrs[strings.ToLower(attr)] {
-		if want, err := ldapfilter.ParseDN(value); err == nil {
-			w := want.Canonical()
+		if w, ok := canonicalFilterDN(value); ok {
 			for _, got := range e.canonValues(attr) {
 				if got == w {
 					return true
@@ -163,4 +163,48 @@ func substringMatch(v string, f *ldapfilter.Filter) bool {
 		return strings.HasSuffix(v, fin)
 	}
 	return true
+}
+
+// filterDNCache memoizes the canonical form of DN assertion values: a
+// filter with many member/memberOf terms is evaluated against every entry
+// of a result, and every evaluation would parse the same values again.
+// Bounded in entries and in value size; a full cache is dropped as a whole
+// (assertion values come from clients, so nothing is kept per client).
+var filterDNCache = struct {
+	sync.RWMutex
+	m map[string]string
+}{m: map[string]string{}}
+
+const (
+	filterDNCacheMax    = 4096
+	filterDNCacheMaxLen = 512
+)
+
+// canonicalFilterDN returns the canonical form of a DN assertion value;
+// ok is false when the value is not a valid DN.
+func canonicalFilterDN(value string) (string, bool) {
+	if len(value) > filterDNCacheMaxLen {
+		dn, err := ldapfilter.ParseDN(value)
+		if err != nil {
+			return "", false
+		}
+		return dn.Canonical(), true
+	}
+	filterDNCache.RLock()
+	w, hit := filterDNCache.m[value]
+	filterDNCache.RUnlock()
+	if hit {
+		return w, w != ""
+	}
+	dn, err := ldapfilter.ParseDN(value)
+	if err == nil {
+		w = dn.Canonical()
+	}
+	filterDNCache.Lock()
+	if len(filterDNCache.m) >= filterDNCacheMax {
+		filterDNCache.m = make(map[string]string, filterDNCacheMax)
+	}
+	filterDNCache.m[value] = w
+	filterDNCache.Unlock()
+	return w, w != ""
 }

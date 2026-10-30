@@ -71,7 +71,7 @@ func TestAudit14_A5_ParallelBindsReachUpstream(t *testing.T) {
 	}
 	r.dc.SetDelay(400 * time.Millisecond)
 	t.Cleanup(func() { r.dc.SetDelay(0) })
-	before := r.dc.Calls().Binds
+	before := r.dc.Calls().UserBinds()
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i, c := range conns {
@@ -84,7 +84,7 @@ func TestAudit14_A5_ParallelBindsReachUpstream(t *testing.T) {
 	}
 	close(start)
 	wg.Wait()
-	reached := r.dc.Calls().Binds - before
+	reached := r.dc.Calls().UserBinds() - before
 	if reached > 3 {
 		t.Errorf("FINDING: %d parallel wrong-password binds for bob.brown reached the upstream (account.max_failures = 3)", reached)
 	}
@@ -105,7 +105,7 @@ func TestAudit14_A5_AutoLockdownCutsOffAllowCIDRsApp(t *testing.T) {
 		t.Fatalf("baseline bind through the application server: %v", err)
 	}
 	attacker := bindFrom(t, r, "127.0.0.3")
-	before := r.dc.Calls().Binds
+	before := r.dc.Calls().UserBinds()
 	// One password, five account names; the first four are repeated so that
 	// when the fifth distinct account crosses spray.min_accounts (5) the
 	// detector already counts >= 3*5 failed binds -> level high -> auto
@@ -117,13 +117,13 @@ func TestAudit14_A5_AutoLockdownCutsOffAllowCIDRsApp(t *testing.T) {
 		}
 	}
 	_ = attacker.Bind("spray04@test.aldap", "Winter2026!")
-	cost := r.dc.Calls().Binds - before
+	cost := r.dc.Calls().UserBinds() - before
 	ld := waitEvents(t, r, "lockdown", events.Lockdown, func(e events.Record) bool { return e.Data["state"] == "on" })
 	t.Logf("lockdown entered by %v after %d upstream binds from one address", ld.Data["source"], cost)
-	before = r.dc.Calls().Binds
+	before = r.dc.Calls().UserBinds()
 	err := virola.Bind("alice.adams@test.aldap", "alice.adams-pass")
 	if err != nil {
-		t.Errorf("FINDING: application server (ratelimit.allow_cidrs) refused during auto lockdown: %v (upstream binds: %d)", err, r.dc.Calls().Binds-before)
+		t.Errorf("FINDING: application server (ratelimit.allow_cidrs) refused during auto lockdown: %v (upstream binds: %d)", err, r.dc.Calls().UserBinds()-before)
 	}
 	if n := len(findEvents(r, events.BindBlocked, func(e events.Record) bool { return e.Reason == ratelimit.ReasonLockdown && e.ClientIP == "127.0.0.1" })); n > 0 {
 		t.Logf("%d bind_blocked{lockdown} for the application server address", n)
@@ -166,10 +166,10 @@ func TestAudit14_A5_ReloadKeepsLimiterState(t *testing.T) {
 	if !old.Attacking("203.0.113.9") {
 		t.Error("FINDING: attack mark lost on reload")
 	}
-	before := r.dc.Calls().Binds
+	before := r.dc.Calls().UserBinds()
 	c2 := r.ldaps(t)
-	if err := c2.Bind("bob.brown@test.aldap", "bob.brown-pass"); !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) || r.dc.Calls().Binds != before {
-		t.Errorf("FINDING: account lock lost on reload: %v (upstream %d)", err, r.dc.Calls().Binds-before)
+	if err := c2.Bind("bob.brown@test.aldap", "bob.brown-pass"); !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) || r.dc.Calls().UserBinds() != before {
+		t.Errorf("FINDING: account lock lost on reload: %v (upstream %d)", err, r.dc.Calls().UserBinds()-before)
 	}
 	// The failure window of mia.moore survived too: 3 more failures under
 	// the new max_failures = 4 lock her.
@@ -196,8 +196,8 @@ func TestAudit14_A5_ProfilesShareCounters(t *testing.T) {
 	if lock.Data["failures"] != float64(3) {
 		t.Errorf("lock after %v failures", lock.Data["failures"])
 	}
-	before := r.dc.Calls().Binds
-	if err := b.Bind("bob.brown@test.aldap", "bob.brown-pass"); !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) || r.dc.Calls().Binds != before {
+	before := r.dc.Calls().UserBinds()
+	if err := b.Bind("bob.brown@test.aldap", "bob.brown-pass"); !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) || r.dc.Calls().UserBinds() != before {
 		t.Errorf("FINDING: locked account admitted on the other profile: %v", err)
 	}
 	// IP window: eight failures split over both ports lock the shared address.

@@ -159,7 +159,7 @@ func (r Resolver) readFile() func(string) ([]byte, error) {
 // readLimited reads at most MaxSecretFileBytes+1 bytes of a regular file so
 // that a device or an oversized file can neither block nor fill memory.
 func readLimited(path string) ([]byte, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // configured secret path
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}

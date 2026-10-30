@@ -32,10 +32,10 @@ func TestAudit14_A6_ServerKeyKeepsWideMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Stale/planted files: unusable as a certificate, so the manager reissues.
-	if err := os.WriteFile(filepath.Join(dir, ServerKeyFile), []byte("junk"), 0o644); err != nil { //nolint:gosec // the point of the test
+	if err := os.WriteFile(filepath.Join(dir, ServerKeyFile), []byte("junk"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ServerCertFile), []byte("junk"), 0o644); err != nil { //nolint:gosec // public
+	if err := os.WriteFile(filepath.Join(dir, ServerCertFile), []byte("junk"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := New(Options{Profile: "p", Mode: ModeBuiltinCA, CADir: dir, SANs: ParseSANs("localhost")}); err != nil {
@@ -64,7 +64,7 @@ func TestAudit14_A6_ServerKeySymlinkFollowed(t *testing.T) {
 	}
 	victimDir := t.TempDir()
 	victim := filepath.Join(victimDir, "aldap.toml")
-	if err := os.WriteFile(victim, []byte("[server]\nlog_level = \"info\"\n"), 0o644); err != nil { //nolint:gosec // simulated world-readable config
+	if err := os.WriteFile(victim, []byte("[server]\nlog_level = \"info\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(victim, filepath.Join(dir, ServerKeyFile)); err != nil {

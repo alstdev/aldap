@@ -72,7 +72,7 @@ func TestAudit14_A6_PanicOutputNoPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,11 +82,11 @@ func TestAudit14_A6_PanicOutputNoPassword(t *testing.T) {
 		defer cancel()
 		_ = s.Shutdown(ctx)
 	}()
-	c, err := net.Dial("tcp", ln.Addr().String())
+	c, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close() //nolint:errcheck // test
+	defer c.Close()
 	if _, err := c.Write(bindPacket(1, 3, "cn=u", pw)); err != nil {
 		t.Fatal(err)
 	}

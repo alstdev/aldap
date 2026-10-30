@@ -93,7 +93,7 @@ func TestAudit14_A2_WebhookBatchJSON(t *testing.T) {
 	var body []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
-		w.WriteHeader(200)
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 	s, err := NewWebhookSink(WebhookOptions{URL: srv.URL, Timeout: time.Second})

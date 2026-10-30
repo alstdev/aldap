@@ -124,7 +124,7 @@ func parseArgon2Params(s string) (Argon2Params, error) {
 		return p, fmt.Errorf("%w: m, t and p are required", ErrBadHash)
 	}
 	if err := config.CheckArgon2Costs(uint64(p.Memory), uint64(p.Time), uint64(p.Threads)); err != nil {
-		return p, fmt.Errorf("%w: %v", ErrBadHash, err)
+		return p, fmt.Errorf("%w: %w", ErrBadHash, err)
 	}
 	return p, nil
 }

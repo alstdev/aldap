@@ -74,7 +74,7 @@ func leaksUpstream(s string) bool {
 	return strings.Contains(l, "dc=test") || strings.Contains(l, "ou=office") || strings.Contains(l, "ou=branch") || strings.Contains(l, "cn=users,")
 }
 
-func sortedDNs(es []listener.Entry) string {
+func sortedDNS(es []listener.Entry) string {
 	d := dns(es)
 	sort.Strings(d)
 	return strings.Join(d, ";")
@@ -281,7 +281,7 @@ func TestAudit14_A4_DeniedFilterNoOracle(t *testing.T) {
 	})
 	f.d.o.HoneytokenLock = time.Hour
 	_, all := f.search(t, usersDN, listener.ScopeSub, "(objectClass=*)")
-	everyone := sortedDNs(all)
+	everyone := sortedDNS(all)
 	if len(all) != 20 { // 19 users + honeytoken
 		t.Fatalf("baseline = %d", len(all))
 	}
@@ -324,7 +324,7 @@ func TestAudit14_A4_DeniedFilterNoOracle(t *testing.T) {
 		if rh.Code != 0 || rm.Code != 0 || rh.Diagnostic != "" || rm.Diagnostic != "" {
 			t.Errorf("%s / %s: codes %v %v", p.hit, p.miss, rh, rm)
 		}
-		if sortedDNs(hes) != sortedDNs(mes) {
+		if sortedDNS(hes) != sortedDNS(mes) {
 			t.Errorf("ORACLE %s → %v, %s → %v", p.hit, dns(hes), p.miss, dns(mes))
 		}
 		if len(hes) > len(all) {
@@ -345,7 +345,7 @@ func TestAudit14_A4_DeniedFilterNoOracle(t *testing.T) {
 	}
 	// Positive controls: a NOT of a denied term is TRUE (documented), never
 	// more than everyone; denied presence is FALSE.
-	if _, es := f.search(t, usersDN, listener.ScopeSub, "(!(department=*))"); sortedDNs(es) != everyone {
+	if _, es := f.search(t, usersDN, listener.ScopeSub, "(!(department=*))"); sortedDNS(es) != everyone {
 		t.Errorf("(!(denied=*)) = %v", dns(es))
 	}
 	if _, es := f.search(t, usersDN, listener.ScopeSub, "(department=*)"); len(es) != 0 {

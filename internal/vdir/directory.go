@@ -700,6 +700,13 @@ func (d *Directory) users(ctx context.Context, sc *searchCtx, rdn string) ([]lis
 		}
 		mem = m
 	}
+	return d.renderUsers(sc, merged, traps, mem), listener.Success
+}
+
+// renderUsers turns the merged upstream entries (the first traps of them
+// are upstream, the rest honeytokens) into virtual user entries that match
+// the filter, sorted by DN.
+func (d *Directory) renderUsers(sc *searchCtx, merged []upstream.Entry, traps int, mem *membership) []listener.Entry {
 	rdns := map[string]int{}
 	for _, e := range merged {
 		rdns[strings.ToLower(d.virtualRDN(e))]++
@@ -720,7 +727,7 @@ func (d *Directory) users(ctx context.Context, sc *searchCtx, rdn string) ([]lis
 		out = append(out, full.project(sc.want, sc.all))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].DN < out[j].DN })
-	return out, listener.Success
+	return out
 }
 
 // fetchUsers runs the upstream searches over the profile bases in parallel

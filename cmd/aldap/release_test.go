@@ -60,7 +60,7 @@ func TestActionsPinnedBySHA(t *testing.T) {
 	use := regexp.MustCompile(`(?m)^\s*(?:-\s+)?uses:\s+(\S+)`)
 	pinned := regexp.MustCompile(`@[0-9a-f]{40}$`)
 	for _, f := range files {
-		b, err := os.ReadFile(f) //nolint:gosec // repository file
+		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -81,7 +81,7 @@ func TestActionsPinnedBySHA(t *testing.T) {
 // never started (audit A9-1). Verified by running the plain image under the
 // profile (docs/AUDIT.md).
 func TestSeccompCoversObservedSyscalls(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "deploy", "seccomp.json")) //nolint:gosec // repository file
+	b, err := os.ReadFile(filepath.Join("..", "..", "deploy", "seccomp.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

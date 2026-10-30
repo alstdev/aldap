@@ -1,7 +1,7 @@
 package config
 
 // Audit 14, area A.10 (configuration and validation). These tests document
-// the behaviour of Load/Validate against SPEC §3.4/§3.5/§9; a failing test
+// the behavior of Load/Validate against SPEC §3.4/§3.5/§9; a failing test
 // is a finding (see the audit report), not a regression to "fix" by editing
 // the test.
 
@@ -25,11 +25,11 @@ func TestAudit14_A10_UnknownKeys(t *testing.T) {
 	tests := []struct {
 		name, body, key string
 	}{
-		{"top_level", "anonymos_bind = true\n", "anonymos_bind"},
+		{"top_level", "anonym0us_bind = true\n", "anonym0us_bind"},
 		{"server_wrong_table", "[server]\nmax_failures = 3\n", "server.max_failures"},
 		{"tls_typo", "[tls]\ntls_insecure_skip_verfy = true\n", "tls.tls_insecure_skip_verfy"},
 		{"upstream_typo", "[upstream.u]\nservers=[\"ldaps://a\"]\ntls_insecure_skip_verfy = true\n", "upstream.u.tls_insecure_skip_verfy"},
-		{"upstream_starttls_typo", "[upstream.u]\nservers=[\"ldaps://a\"]\nstarttls_requried = true\n", "upstream.u.starttls_requried"},
+		{"upstream_starttls_typo", "[upstream.u]\nservers=[\"ldaps://a\"]\nstarttls_requ1red = true\n", "upstream.u.starttls_requ1red"},
 		{"upstream_failover", "[upstream.u]\nservers=[\"ldaps://a\"]\n[upstream.u.failover]\nmax_failures = 3\n", "upstream.u.failover.max_failures"},
 		{"upstream_pool", "[upstream.u]\nservers=[\"ldaps://a\"]\n[upstream.u.pool]\nsizes = 3\n", "upstream.u.pool.sizes"},
 		{"upstream_timeouts", "[upstream.u]\nservers=[\"ldaps://a\"]\n[upstream.u.timeouts]\nconnectt = \"1s\"\n", "upstream.u.timeouts.connectt"},
@@ -43,8 +43,8 @@ func TestAudit14_A10_UnknownKeys(t *testing.T) {
 		{"ids_top", "[ids]\nenabled = false\n", "ids.enabled"},
 		{"ids_spray", "[ids.spray]\nwindows = \"1m\"\n", "ids.spray.windows"},
 		{"ids_unknown_detector", "[ids.sprey]\nenabled = false\n", "ids.sprey.enabled"},
-		{"profile_anonymous", "[profile.p]\nlisten=[\":1\"]\nanonymos_bind = true\n", "profile.p.anonymos_bind"},
-		{"profile_starttls", "[profile.p]\nlisten=[\":1\"]\nstarttls_requried = true\n", "profile.p.starttls_requried"},
+		{"profile_anonymous", "[profile.p]\nlisten=[\":1\"]\nanonym0us_bind = true\n", "profile.p.anonym0us_bind"},
+		{"profile_starttls", "[profile.p]\nlisten=[\":1\"]\nstarttls_requ1red = true\n", "profile.p.starttls_requ1red"},
 		{"profile_tls", "[profile.p]\nlisten=[\":1\"]\n[profile.p.tls]\ninsecure = true\n", "profile.p.tls.insecure"},
 		{"profile_attrs", "[profile.p]\nlisten=[\":1\"]\n[profile.p.attrs]\ndeny = [\"x\"]\n", "profile.p.attrs.deny"},
 		{"profile_client_bind", "[profile.p]\nlisten=[\":1\"]\n[profile.p.client_bind]\npasswd = \"x\"\n", "profile.p.client_bind.passwd"},
@@ -113,7 +113,7 @@ func TestAudit14_A10_UnknownKeys_Env(t *testing.T) {
 	for _, env := range []string{
 		"ALDAP_UPSTREAM_AD_MAIN_TLS_INSECURE_SKIP_VERFY=true",
 		"ALDAP_RATELIMIT_ENABLE=false",
-		"ALDAP_PROFILE_APP_ANONYMOS_BIND=true",
+		"ALDAP_PROFILE_APP_ANONYM0US_BIND=true",
 		"ALDAP_API_TOKEN_0_TOKEN=x",
 		"ALDAP_IDS_SPRAY_ENABLE=false",
 		"ALDAP_ENABLED=false",
@@ -382,7 +382,7 @@ func TestAudit14_A10_IncludeOverridesGlobalTables(t *testing.T) {
 	}
 }
 
-// Behavioural evidence for the include mechanics on the real file system.
+// Behavioral evidence for the include mechanics on the real file system.
 func TestAudit14_A10_IncludeBehavior(t *testing.T) {
 	dir := t.TempDir()
 	outside := t.TempDir()
@@ -417,7 +417,7 @@ func TestAudit14_A10_IncludeBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	// Documented behaviour (not a finding): ../, absolute paths and symlinks
+	// Documented behavior (not a finding): ../, absolute paths and symlinks
 	// are followed; the configuration directory is the operator's trust zone.
 	for _, name := range []string{"outside-abs", "escaped-dotdot", "via-symlink"} {
 		if _, ok := cfg.Upstreams[name]; !ok {

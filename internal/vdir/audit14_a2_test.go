@@ -233,7 +233,7 @@ func TestAudit14_A2_ReverseVirtualDN(t *testing.T) {
 		"cn=admin,ou=users,ou=virola,dc=aldap",
 		"nl\nline",
 	}
-	var opts []testdir.Option
+	opts := make([]testdir.Option, 0, len(hostile))
 	for i, v := range hostile {
 		opts = append(opts, testdir.WithEntries(a2User(i, v)))
 	}

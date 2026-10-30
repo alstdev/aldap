@@ -301,7 +301,7 @@ func WriteKeyPair(certPath, keyPath string, certPEM []byte, key crypto.Signer) e
 	if err := writeFileAtomic(keyPath, keyPEM, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", keyPath, err)
 	}
-	if err := writeFileAtomic(certPath, certPEM, 0o644); err != nil { //nolint:gosec // certificates are public
+	if err := writeFileAtomic(certPath, certPEM, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", certPath, err)
 	}
 	return nil
@@ -322,7 +322,7 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		}
 		tmp = filepath.Join(dir, "."+filepath.Base(path)+"."+hex.EncodeToString(buf[:])+".tmp")
 		var err error
-		f, err = os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode) //nolint:gosec // random name under the CA directory
+		f, err = os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err == nil {
 			break
 		}
@@ -334,8 +334,8 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return errors.New("could not create a temporary file")
 	}
 	cleanup := func(err error) error {
-		_ = f.Close()
-		_ = os.Remove(tmp)
+		_ = f.Close()      //nolint:errcheck // already failing; the first error is returned
+		_ = os.Remove(tmp) //nolint:errcheck // best-effort cleanup of our own temp file
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
@@ -348,11 +348,11 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return cleanup(err)
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) //nolint:errcheck // best-effort cleanup of our own temp file
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) //nolint:errcheck // best-effort cleanup of our own temp file
 		return err
 	}
 	return nil

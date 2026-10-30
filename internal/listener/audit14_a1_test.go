@@ -63,12 +63,12 @@ func TestAudit14_A1_FailedBindResetsAuthState(t *testing.T) {
 	if m := readRaw(t, rd); resultCode(t, m) != ldap.LDAPResultInvalidCredentials {
 		t.Fatalf("empty-password bind: %d", resultCode(t, m))
 	}
-	var conns []*Conn
-	ts.Server.mu.Lock()
-	for c := range ts.Server.conns {
+	ts.mu.Lock()
+	conns := make([]*Conn, 0, len(ts.conns))
+	for c := range ts.conns {
 		conns = append(conns, c)
 	}
-	ts.Server.mu.Unlock()
+	ts.mu.Unlock()
 	if len(conns) != 1 {
 		t.Fatalf("conns = %d", len(conns))
 	}

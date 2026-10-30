@@ -52,7 +52,7 @@ type rawLDAPServer struct {
 
 func startRawLDAP(t *testing.T, refURL string, doneCode int64) *rawLDAPServer {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func resultOp(tag ber.Tag, code int64, diag string, referrals []string) *ber.Pac
 // trapListener counts TCP connections: the referred-to "attacker" host.
 func trapListener(t *testing.T) (string, *atomic.Int32) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -394,7 +394,7 @@ func TestAudit14_A7_NoCORSContentTypeErrorShape(t *testing.T) {
 				if strings.Contains(er.Error, "/home/") || strings.Contains(er.Error, "goroutine ") || strings.Contains(er.Error, ".go:") {
 					t.Errorf("%s %s: error discloses internals: %q", rt.Method, rt.Path, er.Error)
 				}
-			case rt.Path == "/v1/config" && rt.Method == "GET":
+			case rt.Path == "/v1/config" && rt.Method == http.MethodGet:
 				if ct != "application/toml" {
 					t.Errorf("GET /v1/config content type %q", ct)
 				}

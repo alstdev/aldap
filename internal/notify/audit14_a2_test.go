@@ -190,7 +190,7 @@ func TestAudit14_A2_VirolaJSON(t *testing.T) {
 }
 
 // Custom template_dir text is sent unescaped (documented); confirms the
-// behaviour so the report can state it.
+// behavior so the report can state it.
 func TestAudit14_A2_TelegramCustomTemplateUnescaped(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "bind_fail.tmpl"), []byte("Account: {{.Account}}"), 0o600); err != nil {

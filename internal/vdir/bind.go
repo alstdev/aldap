@@ -21,6 +21,12 @@ import (
 // invalidCredentials is the only failure clients see (SPEC §9).
 var invalidCredentials = listener.Result{Code: ldap.LDAPResultInvalidCredentials}
 
+// refusal returns a private copy of invalidCredentials.
+func refusal() *listener.Result {
+	r := invalidCredentials
+	return &r
+}
+
 // Bind authenticates a client (SPEC §4.3): anonymous, client_bind or user.
 func (d *Directory) Bind(ctx context.Context, c *listener.Conn, name string, password []byte) listener.Result {
 	start := d.now()
@@ -271,18 +277,7 @@ func (d *Directory) anonymousBind(b *bindCtx, name string, password []byte) (lis
 func (d *Directory) bind(ctx context.Context, b *bindCtx, password []byte) listener.Result {
 	name := strings.TrimSpace(b.name)
 	b.account = name
-	if name != "" && len(password) == 0 {
-		// An unauthenticated probe of a trap is a hit like any bind (SPEC
-		// §4.5), although it is answered as anonymous below.
-		switch bn := d.rules.NormalizeBindName(name); {
-		case d.rules.Mode == "honeypot":
-			d.honeytokenHit(b.conn, "bind", name)
-		case bn.Form != profile.FormOtherDN:
-			if h := d.rules.MatchHoneytoken(bn.Account); h != nil {
-				d.honeytokenHit(b.conn, "bind", h.Account)
-			}
-		}
-	}
+	d.probeTrap(b, name, password)
 	if res, done := d.anonymousBind(b, name, password); done {
 		return res
 	}
@@ -317,26 +312,9 @@ func (d *Directory) bind(ctx context.Context, b *bindCtx, password []byte) liste
 		b.reason = upstream.ReasonUnknownAccount
 		return invalidCredentials
 	}
-	var realDN string
-	switch bn.Form {
-	case profile.FormOtherDN:
-		// Real directory DNs are never accepted: only the virtual tree exists.
-		b.reason = upstream.ReasonUnknownAccount
-		return invalidCredentials
-	case profile.FormVirtualDN:
-		e, res := d.lookupUser(ctx, b, &ldapfilter.Filter{Kind: ldapfilter.Equality, Attr: d.rules.RDNAttr, Value: bn.RDN}, "")
-		if res != nil {
-			return *res
-		}
-		realDN = e.DN
-		bn.Upstream = realDN
-		if !d.rekey(b, e) {
-			return invalidCredentials
-		}
-	case profile.FormUPN, profile.FormDomain, profile.FormAccount:
-		if !d.rekey(b, d.resolveIdentity(ctx, b, bn)) {
-			return invalidCredentials
-		}
+	realDN, res := d.bindTarget(ctx, b, &bn)
+	if res != nil {
+		return *res
 	}
 	err := d.up.UserBind(ctx, bn.Upstream, string(password))
 	if err != nil {
@@ -349,6 +327,51 @@ func (d *Directory) bind(ctx context.Context, b *bindCtx, password []byte) liste
 		}
 	}
 	return listener.Success
+}
+
+// probeTrap counts an unauthenticated probe of a trap (a name without a
+// password) as a hit like any bind (SPEC §4.5), although it is answered as
+// anonymous.
+func (d *Directory) probeTrap(b *bindCtx, name string, password []byte) {
+	if name == "" || len(password) != 0 {
+		return
+	}
+	switch bn := d.rules.NormalizeBindName(name); {
+	case d.rules.Mode == "honeypot":
+		d.honeytokenHit(b.conn, "bind", name)
+	case bn.Form != profile.FormOtherDN:
+		if h := d.rules.MatchHoneytoken(bn.Account); h != nil {
+			d.honeytokenHit(b.conn, "bind", h.Account)
+		}
+	}
+}
+
+// bindTarget resolves the upstream identity a user bind is forwarded to
+// (bn.Upstream) and re-keys the limiter to the canonical account. It returns
+// the real DN when the bind name was a virtual DN, or a client result when
+// the bind must be refused.
+func (d *Directory) bindTarget(ctx context.Context, b *bindCtx, bn *profile.BindName) (string, *listener.Result) {
+	switch bn.Form {
+	case profile.FormVirtualDN:
+		e, res := d.lookupUser(ctx, b, &ldapfilter.Filter{Kind: ldapfilter.Equality, Attr: d.rules.RDNAttr, Value: bn.RDN}, "")
+		if res != nil {
+			return "", res
+		}
+		bn.Upstream = e.DN
+		if !d.rekey(b, e) {
+			return "", refusal()
+		}
+		return e.DN, nil
+	case profile.FormUPN, profile.FormDomain, profile.FormAccount:
+		if !d.rekey(b, d.resolveIdentity(ctx, b, *bn)) {
+			return "", refusal()
+		}
+		return "", nil
+	default:
+		// Real directory DNs are never accepted: only the virtual tree exists.
+		b.reason = upstream.ReasonUnknownAccount
+		return "", refusal()
+	}
 }
 
 // bindError maps an upstream bind failure (SPEC §4.3).
