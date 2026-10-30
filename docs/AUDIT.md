@@ -165,7 +165,7 @@
 | Critical/High виправлені окремими `sec:` комітами з регресійним тестом | виконано (5 High; A9-1 — `4f133cf`) |
 | Medium виправлені або прийняті з обґрунтуванням | виконано (2 прийнято: A9-3, A9-4) |
 | `docs/THREAT_MODEL.md`, `docs/AUDIT.md`, `docs/TRACEABILITY.md` | виконано (THREAT_MODEL — до перегляду після фінального проходу) |
-| повний `make ci` | виконано локально: `golangci-lint` 0 зауважень, `go vet`, unit `-race`, integration `-race`, `licenses`, `windows-ctl`, `shellcheck`; `govulncheck` — лише в GitHub CI (`vuln.go.dev` недоступний із сесії) |
+| повний `make ci` | частково локально: `gofmt`, `go vet` (з тегом `integration`), `golangci-lint` (0 зауважень), `windows-ctl`, unit `-race`, integration `-race` — зелені. Не виконано в сесії: `govulncheck` (`vuln.go.dev` недоступний), `licenses` (go-licenses падає на Go 1.26: «net/http/httptest does not have module info»; `go.mod` відносно `main` не змінений), `shellcheck` (не встановлений; shell-скрипти відносно `main` не змінені). Ці три кроки мають пройти в GitHub CI на PR |
 | фінальний незалежний прохід (субагент лише з кодом і SPEC.md) | **не виконано** |
 | fuzz і samba через `workflow_dispatch` | **не виконано** (у цій сесії немає доступу до запуску workflow) |
 | PR у main | **не створено** |

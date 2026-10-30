@@ -8,7 +8,7 @@
 - Відкрито (Low/прийнято): digest-піни DHI, ruleset тегів GitHub, `image`-job на PR, відтворюваність збірки (див. AUDIT, «Залишкові ризики»).
 - НЕ виконано: фінальний незалежний прохід (субагент лише з кодом і SPEC.md), прогони fuzz і samba через `workflow_dispatch` (у сесії немає доступу до запуску workflow — зробити вручну), PR у main (не зливати).
 - Середовище: `vuln.go.dev` заблокований (govulncheck лише в CI), `dhi.io` недоступний; Docker daemon піднімається вручну.
-- `make ci` локально зелений (lint 0, unit/integration `-race`); виправлено флак таймінг-оракула: поріг паддінгу `client_bind` тепер ковзне середнє реальних перевірок (`Rules.observeClientVerify`), `testdir.Counts.UserBinds()` відокремлює bind'и користувачів від сервісних.
+- Локально зелено: gofmt, vet, lint 0, windows-ctl, unit/integration `-race` (govulncheck, licenses, shellcheck — лише GitHub CI, див. AUDIT); виправлено флак таймінг-оракула: поріг паддінгу `client_bind` тепер ковзне середнє реальних перевірок (`Rules.observeClientVerify`), `testdir.Counts.UserBinds()` відокремлює bind'и користувачів від сервісних.
 - Зупинився: після `make ci` локально; далі — фінальний прохід, PR.
 
 ## Stage 13 — Samba AD, DHI, реліз (завершено 2026-10-26)
