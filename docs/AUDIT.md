@@ -14,15 +14,15 @@
 
 ## Підсумок за серйозністю
 
-| Серйозність | Знайдено | Виправлено | Прийнято ризик |
+| Серйозність | Знайдено | Виправлено | Прийнято / відкрито |
 |---|---|---|---|
 | Critical | 0 | — | — |
 | High | 5 | 5 | 0 |
-| Medium | 12 | 12 | 0 |
-| Low | 14 | 11 | 3 (задокументовано) |
-| Info | 20 | — | перелік нижче |
+| Medium | 21 | 19 (A3-5 частково) | 2 (A9-3, A9-4) |
+| Low | 25 | 21 (A10-11 частково) | 4 (A9-5, A9-7, A10-10, A10-14) |
+| Info | перелік нижче | — | — |
 
-Критичних знахідок немає. Усі High і Medium виправлені окремими комітами `sec:` з регресійними тестами (`TestAudit14_*`).
+Критичних знахідок немає. Усі High виправлені. Виправлення пройшли тести торкнутих пакетів; повний `make ci`, фінальний незалежний прохід і прогони fuzz/samba через `workflow_dispatch` на момент написання **не виконані** (див. «Статус етапу»). Знахідки A1-1, A5-1, A5-2, A3-2, A9-1 виправлені окремими комітами `sec:`; решта — окремими `sec:` комітами за темою або (A1-5, A1-6, A2-1, A6-3…A6-5, A7-1…A7-3, A8-2, A8-3, A9-1 у частині профілю, A10-*) у коміті `stage-14: wip`, який об'єднав пакет виправлень перед розбиттям.
 
 ## Знахідки
 
@@ -36,7 +36,7 @@
 | **A5-1** | `internal/ratelimit` | Гонка PreBind/PostBind: N паралельних bind'ів проходили перевірку до запису першої невдачі — 12–20 невірних паролів одним пакетом доходили до AD. | `TestAudit14_A5_ParallelPreBindRace_Account`, `TestAudit14_A5_ParallelPreBindRace_NegativeCache`, `TestAudit14_A5_ParallelBindsReachUpstream` (daemon, 12 доходили) | `417124b`: PreBind резервує спробу (по акаунту, по IP, по парі акаунт+пароль); записані невдачі + резервації < бюджету; однакова пара допускається одна в польоті; PostBind звільняє; таблиця резервацій fail-closed |
 | **A5-2** | `internal/ratelimit` (lockdown) | `lockdown.auto` вмикався від high `attack_start` (≈15 bind'ів з одного IP), а lockdown поважав лише `lockdown.allow_cidrs` — застосунок, вказаний лише в `ratelimit.allow_cidrs` (розкладка `deploy/virola-stack`), відрізався повністю. | `TestAudit14_A5_LockdownIgnoresRatelimitAllowCIDRs`, `TestAudit14_A5_AutoLockdownCutsOffAllowCIDRsApp` | `00581b1`: lockdown обслуговує й джерела `ratelimit.allow_cidrs`; решта відхиляється без upstream |
 | **A3-2** | `internal/vdir/directory.go` (`fetchUsers`), `internal/ldapfilter` (`Split`) | Терм на `memberOf` або computed-атрибут переносив увесь фільтр у пост-фільтр, а upstream-пошук виконувався з `SizeLimit=0`: один запит витягував і трансформував усіх користувачів усіх bases (повний скан каталогу на запит, обмежений лише `search_rps`). | `TestAudit14_A3_PostFilterPullsWholeDirectory` (40 000 записів заради відповіді з 10) | `50d880e`: кандидати пост-фільтрованого пошуку обмежені `limit+1` як і звичайного; урізаний набір → `sizeLimitExceeded`; без віртуальних груп `memberOf` класифікується як denied (false), upstream не питається |
-| **A1-2**→Medium, див. нижче | | | | |
+| **A9-1** | `deploy/seccomp.json`, `docker-compose.yml` | Профіль не містив `arch_prctl`, `statx`, `faccessat2`, `fchmodat`, `pidfd_open`, `pidfd_send_signal`, `waitid`, `statfs`, `restart_syscall`: runc 1.5 не міг запустити контейнер, а `aldap` падав із SIGSEGV після відмови `arch_prctl` — штатний compose-запуск із цим профілем не працював. | strace `aldap check` і `aldap run`; `docker run --read-only --cap-drop ALL --user 65532 --security-opt seccomp=old` → контейнер не стартує (rc 127); `TestSeccompCoversObservedSyscalls` (10 відсутніх) | `4f133cf` + профіль у `stage-14: wip`: усі потрібні syscall'и, `socket` лише AF_UNIX/AF_INET/AF_INET6; перевірено запуском: `check --quick` rc 0, `aldap run` слухає порт |
 
 ### Medium
 
@@ -55,6 +55,13 @@
 | **A7-2** | `internal/events/bus.go`, `internal/api/handlers.go` | `GET /v1/events?limit=1` копіював усе кільце (183 MB, 342 мс під м'ютексом шини, який потрібен `Emit` на шляху LDAP); `stream?since=0` відтворював 100 000 записів (31 MB) на з'єднання. | `TestAudit14_A7_Finding_EventsFullRingCopy` | `Bus.Each`/бінарний пошук початку; копіюються лише відповідні записи; backfill стріму порціями по 256 |
 | **A6-1** | `internal/events/webhook.go` | HTTP-клієнт webhook слідував редиректам: 307/308 пересилав батч, налаштовані заголовки (API-ключі, Authorization) і HMAC-підпис на довільний Location. | `TestAudit14_A6_WebhookFollowsRedirect` | `c5378df`: `ErrUseLastResponse`, 3xx — помилка без повтору |
 | **A6-2** | `internal/tlsutil/ca.go` | `WriteKeyPair` писав через `os.WriteFile`: заздалегідь створений 0644 `server.key` отримував свіжий приватний ключ зі широкими правами; symlink на місці `server.key`/`ca.key` перезаписував ціль. | `TestAudit14_A6_ServerKeyKeepsWideMode`, `_ServerKeySymlinkFollowed`, `_CAKeyDanglingSymlinkFollowed` | `3b8bb5e`: запис у новий O_EXCL temp-файл з потрібним режимом + fsync + rename |
+| **A9-2** | `.github/workflows/*` | 35 посилань на сторонні actions за змінними тегами (переміщений тег виконує чужий код у release-job з `id-token`/`packages: write`). | `TestActionsPinnedBySHA` | `6538811`: усі закріплені за SHA (перевірено `git ls-remote`), тег — у коментарі |
+| **A9-3** | `Dockerfile`, `build.sh` | Базові образи DHI закріплені за тегом, не за digest; `golang:1.26-alpine` плаваючий. | огляд; digest із публічного build-log DHI: `golang:1.26.10-debian13-dev` sha256:5bff7bbb…7544, `static:20250419-debian13` sha256:c60b3fca…7e55 | **Прийнято** (рішення DECISIONS 2026-10-26 «DHI tags»): digest заморожує security-перебірки образів; digest не перевірений pull'ом (`dhi.io` недоступний). Пом'якшення: Dependabot/Renovate для docker digest — задача власника |
+| **A9-4** | налаштування GitHub (поза кодом) | Немає ruleset/branch protection на `main` і захисту тегів `v*`: будь-який writer або витік токена створює тег, і `release.yml` підпише й опублікує його з чинною ідентичністю. | `gh api` → порожньо / 404 | **Прийнято, дія власника**: ruleset на `refs/tags/v*` (обмеження + підпис), required checks на `main`, protected environment для release/image |
+| **A10-1** | `internal/config/validate.go` | `allow_cidrs` / `lockdown.allow_cidrs` / `api.token[].allow_cidrs` приймали `0.0.0.0/0` та `::/0` (опечатка `10.0.0.0/0`): усі звільнені від лімітів/lockdown, токен чинний звідусіль; `lockdown.auto` без жодного allow — самоблокування. | `TestAudit14_A10_MissingRules/{*_allow_all_*, lockdown_auto_nobody_allowed}` | `/0` → ERROR, `lockdown.auto` без allow-списків → WARN |
+| **A10-2** | валідатор профілю | Для `kind=generic` проксі-профіль без `filter` (SPEC: обов'язковий) відкривав для пошуку й bind'у кожен об'єкт під `bases`. | `_MissingRules/generic_no_filter` | ERROR |
+| **A10-3** | `internal/secret`, валідатор | `*_file` міг вказувати на будь-який шлях, зокрема на приватний ключ TLS/CA, salt, файл токена API: вміст став би bind-паролем, надісланим на upstream нападника в обхід маскування `GET /v1/config`. | `_MissingRules/{bind_password_file_is_*,client_bind_password_file_is_api_token_file}` | `validatePathCollisions`: секрет-файл = ключ/salt/токен → ERROR |
+| **A10-4** | валідатор, `events.FileSink` | `events.file.path` / `record.file` могли збігатися з CA-ключем, TLS-ключем, salt, mock-файлом: події дописувались би в ключ. | `_MissingRules/{events_file_is_*,record_file_is_salt_file}` | вихідний файл = будь-який вхідний → ERROR; `FileSink` відмовляє не-регулярному файлу/лінку |
 | **A8-1** | `internal/vdir/groups.go` | `include` з `@` матчив `userPrincipalName` АБО `mail`; `mail` в AD не унікальний і часто self-writable → користувач додавав себе у віртуальну групу, виставивши mail = UPN включеного адміністратора. | `TestAudit14_A8_GroupInclude_MailImpersonation` | `a9a22e6`: на AD — лише UPN; generic (без UPN) — mail |
 
 ### Low
@@ -74,10 +81,23 @@
 | **A7-3** | `internal/config`, `cmd/aldap/control.go` | `GET /v1/config` (і bundle) віддавав `client_bind.password_hash` відкрито — офлайн-підбір пароля застосунку. | `TestAudit14_A7_Finding_ConfigGetPasswordHash` | виправлено: тип `secret.Inline` → `***`; `***` на PUT відхиляється |
 | **A8-2** | `internal/upstream/health.go` | `health_check=rootdse` (дефолт) читав RootDSE анонімно: DC з вимогою підпису LDAP на plain `ldap://` відмовляв кожному bind'у кодом 8, але сервер лишався `up` без `upstream_down`. | `TestAudit14_A8_Health_RootDSE_MasksRefusedServiceBind` | виправлено: проба `rootdse` робить сервісний bind, якщо задано `bind_dn` |
 | **A8-3** | `internal/upstream` | Відмови `strongerAuthRequired`/`confidentialityRequired` звітувались лише як `upstream_error` — код результату губився в `check --online` і WARN-логах, штовхаючи до `tls_insecure_skip_verify`. | `TestAudit14_A8_Check_ServiceBindRefused_NamesCause`, `TestAudit14_A8_Bind_SigningRequired_Diagnostics` | виправлено: `BindError.Error()` для `upstream_error` містить результат LDAP; `check` додає підказку про ldaps/StartTLS |
-| **A7-I1..I3** | `internal/api` | 403 `forbidden_source` як оракул валідності токена з недозволеної мережі; дубльовані значення токенів (останній виграє); `/metrics` через IPC ігнорує `metrics.enabled=false`. | тести `TestAudit14_A7_Info_*` | прийнято (Info/Low): IPC = адмін; оракул вимагає валідного токена; дублі — помилка оператора, валідатор попереджає *(див. «Залишкові ризики»)* |
+| **A7-I1..I3** | `internal/api` | I1: 403 `forbidden_source` як оракул валідності токена з недозволеної мережі; I2: дубльовані значення токенів (останній виграє); I3: `/metrics` через IPC ігнорує `metrics.enabled=false`. | `TestAudit14_A7_Info_DuplicateTokenValues`, `_IPCIgnoresMetricsDisabled` | I2 (`Configure` відмовляє) і I3 виправлені; I1 прийнято (оракул потребує валідного токена) |
+| **A9-5** | `release.yml` (`image`) | Job `image` працює на `pull_request` (зміни `build.sh`/`Dockerfile`) із `DHI_TOKEN` у env і `packages: write`: PR із гілки того ж репо може викрасти токен (fork-PR секретів не отримують). | огляд workflow | **Відкрито (Low)**: умова `if` лише для push/dispatch або protected environment |
+| **A9-6** | `release.yml` | Ім'я тега через outputs → `${{ }}` у `run:` (refname допускає `$()`/`;`). | огляд | виправлено `6538811`: `env:` + перевірка `vMAJOR.MINOR.PATCH[-suffix]` |
+| **A9-7** | `Makefile`, `build.sh` | Збірки не відтворювані: `DATE` = годинник, `git describe --dirty`; `SOURCE_DATE_EPOCH` ігнорується (при однакових `-ldflags` два збирання дали однаковий sha256). | два збирання | **Відкрито (Low)**; syft/cosign — плаваючі версії в CI |
+| **A10-5** | `internal/config/load.go` | Підключені файли могли перевизначати глобальні таблиці (вимкнути rate limit, ввімкнути API з власним токеном, змінити лог). | `TestAudit14_A10_IncludeOverridesGlobalTables` | include лише `[upstream.*]`/`[profile.*]` (`ErrIncludeScope`) |
+| **A10-6** | валідатор | `aldap check` мовчав там, де `run` відмовляє: `client_auth=require` профілю без CA, зовнішній cert профілю не перевірявся, API mTLS на loopback без TLS, `metrics.listen` не-loopback без TLS. | `_MissingRules/{profile_tls_*,api_require_*,metrics_*}` | перевірки додані |
+| **A10-7** | валідатор | Немає верхніх меж: `max_request_bytes` 1 GiB, `max_conns_per_ip` 1e9, `nested_depth` 1e6; `max_filter_depth` > 64 тихо обрізається. | `_MissingRules/{max_*,nested_depth_huge}` | стелі й ERROR |
+| **A10-8** | валідатор | Ключі іншого типу каналу приймались мовчки (`tls_insecure_skip_verify` на webhook ігнорується); `virtual_base` рівний/під реальним base; вимкнені захисти (`ratelimit.enabled`, `constant_time_bind_fail`, детектори IDS, `audit_service_account`) без попередження. | `_MissingRules/{*_channel_*,virtual_base_*,*_disabled,*_off}` | ERROR для чужих ключів і `virtual_base`, WARN для вимкнених захистів |
+| **A10-10** | `internal/config/load.go` | Явні нулі (`retry.max=0`, `queue_size=0`, `batch_size=0`, `timeout="0s"`) тихо замінюються дефолтами. | тест (знято) | **Прийнято**: нуль = «за замовчуванням» задокументовано в `docs/config.md`; безпечного значення «0» ці ключі не мають |
+| **A10-11** | `internal/secret`, читачі файлів | `*_file` без перевірки регулярного файлу й ліміту розміру: FIFO підвішує `check`/старт/`PUT dry_run`, великий файл читається цілком. | `TestAudit14_A10_FIFODoesNotHang`, `_LargeFileCapped` | секретні файли: лише регулярні, ≤ 64 KiB, `O_NONBLOCK`; **частково** — читачі PEM/mock/template лишились без ліміту |
+| **A10-12** | `internal/config/env.go` | `X` і `X_FILE` одночасно в env — тихо виграє останній (SPEC §3.2: помилка). | `_EnvTwoSecretSources` | `ErrMultipleSources` |
+| **A10-13** | `internal/config/env.go` | Таблиці `my-app` і `my_app` мають одну env-назву — перевизначення потрапляло недетерміновано. | `_EnvAmbiguousTableName` | `ErrAmbiguousTable` |
+| **A10-14** | `internal/secret` | Тексти помилок проби файлу розрізняють «немає / каталог / немає прав» — оракул існування шляху для читача `aldap check`/admin API. | тест (знято) | **Прийнято (Low)**: admin = оператор; оракул потребує права писати конфіг |
 
 ### Info (без змін коду або лише документація)
 
+- **Б (відповідність ТЗ, `docs/TRACEABILITY.md`):** 373 вимоги — 351 виконано, 14 частково, 8 свідомо змінено, 0 не виконано (SEC-05 після аудиту — виконано). З 49 сценаріїв TESTING.md: 31 покритий повністю, 16 частково, **немає тесту** лише для №15 (constant-time bind: статистичний тест медіан <10 %; є лише детермінований pad) — прогалина тестів, не коду. Схема подій `events.schema.json` не має `additionalProperties:false` під `data` і не описує `data` для 17 із 30 типів (мутація: зайве поле `data` у `op_denied` не ловиться) — прогалина контролю відповідності; `config.md` ↔ код і `openapi.yaml` ↔ маршрути (метод/шлях/scope) синхронізуються в обидва боки.
 - A1: колізії ключа між доменами (`x@a` vs `x@b`, `CORP\x` vs `OTHER\x`) — одна жертва може бути заблокована через іншу з тим самим sAMAccountName в іншому домені; один ALDAP обслуговує один домен.
 - A3: обрана ідентичність зберігається після StartTLS (RFC 4513 §3.1.1 дозволяє) — зафіксовано в DECISIONS; довірений PROXY-пір повністю визначає адресу клієнта (включно з `allow_cidrs`) — властивість протоколу, задокументовано в `docs/proxy-protocol.md`; `on_overflow=block` зупиняє goroutine з'єднання — за конфігурацією; replica тримає весь віртуальний каталог у пам'яті — за дизайном; 1 MiB wire-фільтр коштує ~0,3 с декомпіляції до текстових лімітів — обмежено `search_rps`.
 - A4: `memberOf` в `attrs.allow` змушує тягнути реальний `memberOf` з AD (не віддається); виключені/комп'ютерні акаунти можуть bind'итись при `require_membership=false` (SPEC робить членство опційним — задокументовано в `docs/vdir.md`); `members.bases` ширше за `profile.bases` виводить RDN поза bases; `:dn:` на дозволеному атрибуті прокидається (не підтверджено на AD); фільтрація по маскованому атрибуту за оригіналом — SPEC §4.6; бінд-імена `<SID=…>`/`<GUID=…>` прокидаються як FormAccount при порожньому `default_domain` — потрібен пароль (не підтверджено).
@@ -97,8 +117,8 @@
 | А.6 TLS і секрети | мін. TLS 1.2 усюди, шифри Go-дефолт, перевірка сертифіката upstream + SNI + IP SAN, `tls_insecure_skip_verify` лише явно з WARN+подією, StartTLS без fallback; API без TLS поза loopback відхиляється двічі; notify — без редиректів, URL без токена в помилках; IPC 0600; record 0600 + Lstat; bundle 0600; матриця `TestNoSecretsInOutput` і таблиця обнулення — у звіті субагента | 2 Medium, 3 Low |
 | А.7 API | повна матриця маршрут × scope збігається зі SPEC §7 і `x-scope`; HEAD/OPTIONS/PATCH/TRACE/нормалізація шляху — без обходу; токен лише в `Authorization: Bearer`; `X-Forwarded-For` не читається; rate limit до авторизації; `MaxBytesReader` 4 MiB; `api_call` для всіх викликів з 401/403/429 | 2 Medium, 1 Low, 3 Info |
 | А.8 Upstream | referrals не слідуються (wire-тест з пасткою-слухачем: 0 з'єднань); URL без userinfo/path/query; bind-only пул ніколи не шукає; invalidCredentials не повторюється на іншому DC; paged cookie не переносяться між DC; `tls_ca_file` виключає системні корені | 1 Medium, 2 Low |
-| А.9 Ланцюг постачання | *(заповнюється зі звіту субагента)* | |
-| А.10 Конфіг | *(заповнюється зі звіту субагента)* | |
+| А.9 Ланцюг постачання | govulncheck недоступний (проксі блокує `vuln.go.dev`) — прямі залежності звірені з базою advisories (0 діючих), `go1.26.10` = найновіший 1.26.x; ліцензії: 0 copyleft у 36 модулях; Dockerfile non-root, без shell, read-only; `aldap.service` має всі директиви §10.4 + додаткове посилення (`systemd-analyze security` = 1.4 OK); два збирання → однаковий sha256; секретів у дереві й останніх 50 комітах немає; cosign-команда верифікації в `docs/release.md` збігається з workflow | 1 High, 3 Medium, 3 Low |
+| А.10 Конфіг | невідомі ключі → ERROR на всіх рівнях (54 опечатки, включені файли, env); усі дефолти SPEC §3.4 (124 ключі) збігаються з кодом і `docs/config.md`; `ALDAP_*` не обходить WARN і валідатор; парсер TOML не відлунює пароль (окрім bare-word, виправлено A6-4) | 4 Medium, 9 Low, 1 Info (A10-9: toml приймає ключі в іншому регістрі й застосовує їх — прийнято) |
 
 ## LDAP signing / channel binding (A8, Windows Server 2025)
 
@@ -124,6 +144,8 @@
 6. **Admin-токен читає файли** через `include`/`*_file` та існування шляхів через `dry_run` — admin = оператор; обмеження `include` текою конфігу — див. А.10.
 7. **A7-I1..I3** (оракул 403, дублі токенів, `/metrics` через IPC) — прийнято як Low/Info.
 8. **Аудит сервісного акаунта** не покриває `adminCount=1`, `primaryGroupID` 512/519/544/548, well-known SID і перейменовані/локалізовані групи — рекомендація: порівнювати `objectSid` з well-known RID.
+9. **Постачання:** digest-піни DHI (A9-3), ruleset/захист тегів GitHub (A9-4), `image`-job на PR (A9-5), відтворюваність збірки (A9-7) — відкриті/прийняті, див. таблицю.
+10. **Читачі файлів без ліміту** (A10-11 частково): CA/cert/mock/template читаються `os.ReadFile` без обмеження розміру — довіряється оператору, який пише конфіг.
 
 Ручний чекліст для власника (потребує реального стенду):
 
@@ -136,6 +158,14 @@
 - [ ] **Контейнер**: запуск під `deploy/seccomp.json` з `--read-only --cap-drop ALL --user 65532` (див. А.9).
 - [ ] **IPS/ITSM**: webhook-приймач повертає 3xx → батч не пересилається (помилка в логах), HMAC перевіряється.
 
-## Фінальний незалежний прохід
+## Статус етапу (станом на запис)
 
-*(заповнюється після запуску окремого субагента зі свіжим контекстом лише з кодом і SPEC.md)*
+| Вимога ТЗ | Статус |
+|---|---|
+| Critical/High виправлені окремими `sec:` комітами з регресійним тестом | виконано (5 High; A9-1 — `4f133cf`) |
+| Medium виправлені або прийняті з обґрунтуванням | виконано (2 прийнято: A9-3, A9-4) |
+| `docs/THREAT_MODEL.md`, `docs/AUDIT.md`, `docs/TRACEABILITY.md` | виконано (THREAT_MODEL — до перегляду після фінального проходу) |
+| повний `make ci` | **не виконано** |
+| фінальний незалежний прохід (субагент лише з кодом і SPEC.md) | **не виконано** |
+| fuzz і samba через `workflow_dispatch` | **не виконано** (у цій сесії немає доступу до запуску workflow) |
+| PR у main | **не створено** |
