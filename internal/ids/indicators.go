@@ -88,16 +88,25 @@ func (e *Engine) score(key string, w float64, now time.Time) {
 	in.Hits[weightName(w)]++
 }
 
-// evictIndicator drops the lowest decayed score; the caller holds mu.
+// evictIndicator makes room in the indicator table: about one percent of it
+// (at least one), the lowest decayed scores first, in one pass, so that a
+// flood of fresh keys (IPv6 rotation, PROXY headers) pays one scan per
+// thousand new keys and not one per key under the engine lock; the caller
+// holds mu.
 func (e *Engine) evictIndicator(now time.Time) {
-	var victim string
-	best := math.Inf(1)
-	for k, in := range e.ind {
-		if s := decay(in.Score, now.Sub(in.updated)); s < best {
-			best, victim = s, k
-		}
+	type scored struct {
+		key   string
+		score float64
 	}
-	delete(e.ind, victim)
+	all := make([]scored, 0, len(e.ind))
+	for k, in := range e.ind {
+		all = append(all, scored{k, decay(in.Score, now.Sub(in.updated))})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].score < all[j].score })
+	n := max(len(all)/100, 1)
+	for i := 0; i < n && i < len(all); i++ {
+		delete(e.ind, all[i].key)
+	}
 }
 
 func decay(score float64, age time.Duration) float64 {
