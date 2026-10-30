@@ -706,6 +706,13 @@ func (v Validator) validateProfileBind(path string, p *Profile, rep *Report) {
 	if p.AnonymousBind {
 		rep.warnf(path+".anonymous_bind", "anonymous bind is enabled")
 	}
+	// A user bind by UPN, DOMAIN\user or sAMAccountName is forwarded to the
+	// directory as is (SPEC §4.3): an account the profile hides through
+	// filter or exclude_filter still authenticates unless membership is
+	// required.
+	if p.UserBind.Allow && !p.UserBind.RequireMembership && (p.ExcludeFilter != "" || (p.Filter != "" && p.Filter != DefaultADFilter)) {
+		rep.warnf(path+".user_bind.require_membership", "accounts outside the profile (filter, exclude_filter) can still authenticate through it; set require_membership = true to refuse them")
+	}
 }
 
 func (v Validator) validateProfileCache(path string, c *Cache, rep *Report) {

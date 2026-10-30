@@ -2,6 +2,7 @@ package vdir
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"testing"
 
@@ -104,5 +105,26 @@ func TestAudit14_FP1_StillAllowed(t *testing.T) {
 	// The operator's test search simulates the application's session.
 	if tr := f.d.Test(context.Background(), TestRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(objectClass=*)"}); tr.Result.Code != ldap.LDAPResultSuccess || len(tr.Entries) == 0 {
 		t.Errorf("Directory.Test = %+v, %d entries", tr.Result, len(tr.Entries))
+	}
+}
+
+// FP-9 (final pass; not confirmed): the subagent compared the pre-lookup
+// guard key of four spellings of one account and found two. The key is
+// re-keyed to the canonical account after the identity lookup (A1-1), so
+// what matters is how many guesses reach the directory: with rdn_attr = cn
+// four spellings (UPN, bare, DOMAIN\user, virtual DN) must share one budget
+// of account.max_failures = 3.
+func TestAudit14_FP9_FourSpellingsOneBudget(t *testing.T) {
+	f := newFixture(t, func(p *config.Profile) { p.RDNAttr = "cn" })
+	forms := []string{"alice.adams@test.aldap", "alice.adams", `TEST\alice.adams`, "cn=Alice Adams," + usersDN, "ALICE.ADAMS@test.aldap"}
+	before := f.dc.Calls().UserBinds()
+	for i, name := range forms {
+		res := f.d.Bind(context.Background(), testConn("10.0.0.7"), name, []byte(fmt.Sprintf("wrong-%d", i)))
+		if res.Code == ldap.LDAPResultSuccess {
+			t.Fatalf("bind %q succeeded", name)
+		}
+	}
+	if reached := f.dc.Calls().UserBinds() - before; reached != 3 {
+		t.Errorf("%d guesses over %d spellings of one account reached the directory, want exactly account.max_failures = 3", reached, len(forms))
 	}
 }
