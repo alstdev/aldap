@@ -86,8 +86,13 @@ func NewWebhookSink(o WebhookOptions) (*WebhookSink, error) {
 	if ua == "" {
 		ua = "aldap"
 	}
+	// Redirects are never followed: a 3xx would re-send the batch, the
+	// configured headers (credentials) and the HMAC signature to whatever
+	// Location the endpoint names.
+	client := &http.Client{Transport: tr, Timeout: o.Timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return &WebhookSink{URL: o.URL, Headers: o.Headers, Key: o.Key, Retries: o.Retries, Backoff: o.Backoff, MaxBackoff: o.MaxBackoff,
-		Client: &http.Client{Transport: tr, Timeout: o.Timeout}, UserAgent: ua}, nil
+		Client: client, UserAgent: ua}, nil
 }
 
 // Sign returns the signature header value for body.
@@ -170,6 +175,8 @@ func (s *WebhookSink) post(ctx context.Context, body []byte) (retry bool, err er
 		return false, nil
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 		return true, fmt.Errorf("events: webhook %s: status %d", s.URL, resp.StatusCode)
+	case resp.StatusCode >= 300 && resp.StatusCode < 400:
+		return false, fmt.Errorf("events: webhook %s: redirect (status %d) not followed", s.URL, resp.StatusCode)
 	default:
 		return false, fmt.Errorf("events: webhook %s: status %d", s.URL, resp.StatusCode)
 	}

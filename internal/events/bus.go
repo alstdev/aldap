@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -127,6 +128,7 @@ func (b *Bus) Wrap(e Event) Record {
 	}
 	r := newRecord(e, ts, id, b.seq.Add(1), b.o.Host)
 	redactData(r.Data)
+	clipRecord(&r)
 	if b.o.HashAccounts && r.Account != "" {
 		r.AccountHash = HashAccount(b.o.Salt, r.Account)
 		r.Account = ""
@@ -180,21 +182,39 @@ func (b *Bus) store(r Record) {
 	b.head = (b.head + 1) % len(b.ring)
 }
 
-// Since returns up to limit records with Seq > seq, oldest first (limit <= 0 = all).
+// Since returns up to limit records with Seq > seq, oldest first (limit <= 0
+// = all). The ring is ordered by seq, so the start is found by binary
+// search and only the records returned are copied.
 func (b *Bus) Since(seq uint64, limit int) []Record {
+	var out []Record
+	b.Each(seq, func(r Record) bool {
+		out = append(out, r)
+		return limit <= 0 || len(out) < limit
+	})
+	return out
+}
+
+// Each calls fn for every record with Seq > seq, oldest first, under the
+// bus lock, until fn returns false; fn must be quick and must not call
+// back into the bus.
+func (b *Bus) Each(seq uint64, fn func(Record) bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	var out []Record
-	for i := 0; i < b.n; i++ {
-		r := b.ring[(b.head+i)%b.n]
-		if r.Seq > seq {
-			out = append(out, r)
-			if limit > 0 && len(out) >= limit {
-				break
-			}
+	at := func(i int) Record { return b.ring[(b.head+i)%b.n] }
+	start := sort.Search(b.n, func(i int) bool { return at(i).Seq > seq })
+	for i := start; i < b.n; i++ {
+		if !fn(at(i)) {
+			return
 		}
 	}
-	return out
+}
+
+// Count returns how many buffered records have Seq > seq.
+func (b *Bus) Count(seq uint64) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	at := func(i int) Record { return b.ring[(b.head+i)%b.n] }
+	return b.n - sort.Search(b.n, func(i int) bool { return at(i).Seq > seq })
 }
 
 // Last returns the newest n records, oldest first.

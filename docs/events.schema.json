@@ -126,8 +126,9 @@
             "type": "object",
             "required": ["op"],
             "properties": {
-              "op": { "enum": ["add", "modify", "delete", "modrdn", "compare", "extended"] },
-              "oid": { "type": "string" }
+              "op": { "enum": ["add", "modify", "delete", "modrdn", "compare", "extended", "search"] },
+              "oid": { "type": "string" },
+              "reason": { "enum": ["not_bound"] }
             }
           }
         }

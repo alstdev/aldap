@@ -256,10 +256,11 @@ servers = ["ldaps://dc.example.org"]
 	}
 	delete(files, "/etc/aldap/profiles/dup.toml")
 
+	// An included file may define only upstream/profile tables: a nested
+	// [server] (or any other global section) is refused, never followed.
 	files["/etc/aldap/profiles/bad.toml"] = "[server]\ninclude = [\"/x/*.toml\"]\n"
-	cfg, err = loadFS(t, files, nil, "/etc/aldap/aldap.toml")
-	if err != nil || len(cfg.Server.Include) != 1 {
-		t.Errorf("nested include must not be followed: err=%v include=%v", err, cfg.Server.Include)
+	if _, err = loadFS(t, files, nil, "/etc/aldap/aldap.toml"); !errors.Is(err, ErrIncludeScope) {
+		t.Errorf("nested [server] in an included file: err = %v, want ErrIncludeScope", err)
 	}
 }
 
@@ -520,6 +521,8 @@ func TestValidate_Rules(t *testing.T) {
 		{"profile_limits", "[profile.p]\nlisten = [\":1\"]\n[profile.p.limits]\nmax_result_size = 0\n", "profile.p.limits.max_result_size", "at least 1", false},
 		{"profile_record", "[profile.p]\nlisten = [\":1\"]\n[profile.p.record]\nenabled = true\n", "profile.p.record.file", "required", false},
 		{"profile_patch_warn", "[profile.p]\nlisten = [\":1\"]\n[profile.p.ratelimit.account]\nmax_failures = 6\n", "profile.p.ratelimit.account.max_failures", "lockout", true},
+		{"profile_membership_warn_exclude", "[profile.p]\nlisten = [\":1\"]\nexclude_filter = \"(sAMAccountName=svc*)\"\n[profile.p.user_bind]\nallow = true\n", "profile.p.user_bind.require_membership", "outside the profile", true},
+		{"profile_membership_warn_filter", "[profile.p]\nlisten = [\":1\"]\nfilter = \"(department=IT)\"\n[profile.p.user_bind]\nallow = true\n", "profile.p.user_bind.require_membership", "outside the profile", true},
 		{"profile_anonymous_warn", "[profile.p]\nlisten = [\":1\"]\nanonymous_bind = true\n", "profile.p.anonymous_bind", "enabled", true},
 		{"profile_tls_override", "[profile.p]\nlisten = [\":1\"]\n[profile.p.tls]\nmode = \"external\"\n", "profile.p.tls.cert", "required", false},
 		{"cross_virtual_base", "[profile.a]\nlisten = [\":1\"]\nvirtual_base = \"dc=x\"\n[profile.b]\nlisten = [\":2\"]\nvirtual_base = \"DC=X\"\n", "profile.b.virtual_base", "already used", false},
@@ -794,5 +797,29 @@ proxy_protocol = { enabled = true, trusted_cidrs = ["10.89.0.2/32", "fd00::2"] }
 	}
 	if _, err := loadString(t, strings.Replace(body, "trusted_cidrs", "trusted", 1)); err == nil {
 		t.Error("unknown key in proxy_protocol accepted")
+	}
+}
+
+// FP-8: the require_membership warning is raised only where the profile
+// hides accounts that could still bind, and not when membership is required,
+// user binds are off or the default filter is in force.
+func TestValidate_MembershipWarningScope(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		body string
+		warn bool
+	}{
+		"default_filter":      {"[profile.p]\nlisten = [\":1\"]\n[profile.p.user_bind]\nallow = true\n", false},
+		"membership_required": {"[profile.p]\nlisten = [\":1\"]\nexclude_filter = \"(cn=x)\"\n[profile.p.user_bind]\nallow = true\nrequire_membership = true\n", false},
+		"user_bind_off":       {"[profile.p]\nlisten = [\":1\"]\nexclude_filter = \"(cn=x)\"\n[profile.p.user_bind]\nallow = false\n", false},
+		"exclude_set":         {"[profile.p]\nlisten = [\":1\"]\nexclude_filter = \"(cn=x)\"\n[profile.p.user_bind]\nallow = true\n", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			rep := validate(mustLoad(t, tc.body))
+			if got := hasIssue(rep.Warnings, "profile.p.user_bind.require_membership", "outside the profile"); got != tc.warn {
+				t.Errorf("warning = %v, want %v (warnings %v)", got, tc.warn, rep.Warnings)
+			}
+		})
 	}
 }

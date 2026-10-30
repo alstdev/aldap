@@ -525,7 +525,8 @@ func TestLocks_CreateListDeleteLockdown(t *testing.T) {
 		t.Fatalf("account lock: %d %s", w.Code, w.Body.String())
 	}
 	ls := decode[[]lock](t, e.do("GET", "/v1/locks", tokLocksR, ""))
-	if len(ls) != 1 || ls[0].Key != `test\jdoe` || !ls[0].Until.Equal(e.clk.now().Add(DefaultLockDuration)) {
+	// The key is the one binds are counted under (FP-6): no domain, no realm.
+	if len(ls) != 1 || ls[0].Key != "jdoe" || !ls[0].Until.Equal(e.clk.now().Add(DefaultLockDuration)) {
 		t.Fatalf("locks = %+v", ls)
 	}
 	if w := e.do("DELETE", "/v1/locks/account/TEST%5CJDoe", tokLocksW, ""); w.Code != http.StatusNoContent {
@@ -537,12 +538,17 @@ func TestLocks_CreateListDeleteLockdown(t *testing.T) {
 	if w := e.do("DELETE", "/v1/locks/host/x", tokLocksW, ""); w.Code != http.StatusBadRequest {
 		t.Errorf("delete bad target: %d", w.Code)
 	}
-	// Full lock table → 503.
+	// Full lock table: the limiter makes room (the lock that expires first
+	// goes) instead of dropping the new lock, so the call succeeds and the
+	// new lock is in force.
 	full := ratelimit.New(ratelimit.Options{Events: e.bus, Logger: slog.New(slog.DiscardHandler), Now: e.clk.now, MaxEntries: 1})
 	full.LockIP("192.0.2.200", e.clk.now().Add(time.Hour), "ids")
 	e.s.o.Limiter = full
-	if w := e.do("POST", "/v1/locks", tokLocksW, `{"target":"ip","key":"192.0.2.201"}`); w.Code != http.StatusServiceUnavailable {
-		t.Errorf("full table: %d", w.Code)
+	if w := e.do("POST", "/v1/locks", tokLocksW, `{"target":"ip","key":"192.0.2.201"}`); w.Code != http.StatusCreated {
+		t.Errorf("full table: %d %s", w.Code, w.Body.String())
+	}
+	if _, locked := full.IPLocked("192.0.2.201", e.clk.now()); !locked {
+		t.Error("full table: new lock not recorded")
 	}
 	e.s.o.Limiter = e.lim
 	// Lockdown.

@@ -44,6 +44,11 @@ type SecretResolver interface {
 // metrics settings of [api]; the previous state stays on error.
 func (s *Server) Configure(a config.API, res SecretResolver) error {
 	st := &authState{metricsEnabled: a.Metrics.Enabled, metricsPublic: a.Metrics.Public, buckets: newBuckets(a.RateLimitRPS)}
+	if a.MaxStreams > 0 {
+		s.maxStreams.Store(int64(a.MaxStreams))
+	} else {
+		s.maxStreams.Store(DefaultMaxStreams)
+	}
 	for i := range a.Tokens {
 		tc := &a.Tokens[i]
 		v, _, err := res.Resolve(tc.TokenSource())
@@ -55,6 +60,11 @@ func (s *Server) Configure(a config.API, res SecretResolver) error {
 		}
 		t := token{name: tc.Name, sum: sha256.Sum256(v.Bytes()), scopes: map[string]bool{}}
 		v.Wipe()
+		for j := range st.tokens {
+			if subtle.ConstantTimeCompare(st.tokens[j].sum[:], t.sum[:]) == 1 {
+				return fmt.Errorf("api.token[%d].token: same value as api.token[%d] (%q); every token must be distinct", i, j, st.tokens[j].name)
+			}
+		}
 		for _, sc := range tc.Scopes {
 			t.scopes[sc] = true
 		}

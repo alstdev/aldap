@@ -117,6 +117,7 @@ func Default() *Config {
 			Listen:       "127.0.0.1:8636",
 			ClientAuth:   "none",
 			RateLimitRPS: 50,
+			MaxStreams:   64,
 			Metrics:      Metrics{Enabled: true, Public: false},
 		},
 		Upstreams: map[string]*Upstream{},

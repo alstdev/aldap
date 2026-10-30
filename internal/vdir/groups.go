@@ -336,7 +336,7 @@ func (d *Directory) findAccount(ctx context.Context, acct string) ([]upstream.En
 			return d.searchAll(ctx, acct, upstream.ScopeBase, d.profileFilter(nil))
 		}
 	}
-	f := identityFilter(acct)
+	f := d.identityFilter(acct)
 	var out []upstream.Entry
 	for _, base := range d.rules.Bases {
 		es, err := d.searchAll(ctx, base, upstream.ScopeSub, d.profileFilter(f))
@@ -348,23 +348,28 @@ func (d *Directory) findAccount(ctx context.Context, acct string) ([]upstream.En
 	return out, nil
 }
 
-// identityFilter matches an account by UPN or mail (with '@') or by
-// sAMAccountName or uid.
-func identityFilter(acct string) *ldapfilter.Filter {
+// identityFilter matches an include/exclude entry with '@' by
+// userPrincipalName on AD and by mail on generic directories (which have
+// no UPN); without '@' by sAMAccountName or uid. On AD, mail is never an
+// identity: it is not unique and often self-writable, so a user could add
+// themselves to a group by setting mail to an included administrator's UPN.
+func (d *Directory) identityFilter(acct string) *ldapfilter.Filter {
 	eq := func(attr string) *ldapfilter.Filter {
 		return &ldapfilter.Filter{Kind: ldapfilter.Equality, Attr: attr, Value: acct}
 	}
 	if strings.Contains(acct, "@") {
-		return &ldapfilter.Filter{Kind: ldapfilter.Or, Children: []*ldapfilter.Filter{eq("userPrincipalName"), eq("mail")}}
+		if d.rules.Kind == "ad" {
+			return eq("userPrincipalName")
+		}
+		return eq("mail")
 	}
 	return &ldapfilter.Filter{Kind: ldapfilter.Or, Children: []*ldapfilter.Filter{eq("sAMAccountName"), eq("uid")}}
 }
 
+// newMember describes a group member; an entry without an rdn_attr value
+// gets the same opaque RDN transform gives it.
 func (d *Directory) newMember(e upstream.Entry) *member {
-	mb := &member{key: d.dedupeKey(e), rdn: e.First(d.rules.RDNAttr), guid: e.First(attrObjectGUID), up: e.DN}
-	if mb.rdn == "" {
-		mb.rdn = e.DN
-	}
+	mb := &member{key: d.dedupeKey(e), rdn: d.virtualRDN(e), guid: e.First(attrObjectGUID), up: e.DN}
 	for _, a := range identityAttrs {
 		for _, v := range e.Get(a) {
 			mb.ids = append(mb.ids, strings.ToLower(v))

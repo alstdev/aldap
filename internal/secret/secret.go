@@ -9,10 +9,12 @@ package secret
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
 	"strings"
+	"syscall"
 )
 
 // Redacted is what every secret renders as outside Reveal().
@@ -151,7 +153,25 @@ func (r Resolver) readFile() func(string) ([]byte, error) {
 	if r.ReadFile != nil {
 		return r.ReadFile
 	}
-	return os.ReadFile
+	return readLimited
+}
+
+// readLimited reads at most MaxSecretFileBytes+1 bytes of a regular file so
+// that a device or an oversized file can neither block nor fill memory.
+func readLimited(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close() //nolint:errcheck // read-only
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: %w", path, ErrNotRegular)
+	}
+	return io.ReadAll(io.LimitReader(f, MaxSecretFileBytes+1))
 }
 
 func (r Resolver) stat() func(string) (fs.FileInfo, error) {
@@ -195,9 +215,25 @@ func (r Resolver) Resolve(s Source) (Value, []Warning, error) {
 	return Value{}, nil, nil
 }
 
+// MaxSecretFileBytes bounds a secret file: a path that names a device, a
+// FIFO or a huge file must not hang the start or exhaust memory.
+const MaxSecretFileBytes = 64 << 10
+
+// ErrNotRegular reports a secret path that is not a regular file.
+var ErrNotRegular = errors.New("secret file is not a regular file")
+
+// ErrTooLarge reports a secret file above MaxSecretFileBytes.
+var ErrTooLarge = errors.New("secret file is too large")
+
 func (r Resolver) resolveFile(path string) (Value, []Warning, error) {
 	var warns []Warning
 	if fi, err := r.stat()(path); err == nil {
+		if !fi.Mode().IsRegular() {
+			return Value{}, warns, fmt.Errorf("%s: %w", path, ErrNotRegular)
+		}
+		if fi.Size() > MaxSecretFileBytes {
+			return Value{}, warns, fmt.Errorf("%s: %w (%d bytes, limit %d)", path, ErrTooLarge, fi.Size(), MaxSecretFileBytes)
+		}
 		if mode := fi.Mode().Perm(); mode&^MaxFileMode != 0 {
 			warns = append(warns, Warning{Msg: fmt.Sprintf("%s: mode %04o is more permissive than %04o", path, mode, MaxFileMode)})
 		}
@@ -205,6 +241,9 @@ func (r Resolver) resolveFile(path string) (Value, []Warning, error) {
 	b, err := r.readFile()(path)
 	if err != nil {
 		return Value{}, warns, fmt.Errorf("read secret file: %w", err)
+	}
+	if len(b) > MaxSecretFileBytes {
+		return Value{}, warns, fmt.Errorf("%s: %w (%d bytes, limit %d)", path, ErrTooLarge, len(b), MaxSecretFileBytes)
 	}
 	b = []byte(strings.TrimRight(string(b), "\r\n"))
 	if len(b) == 0 {

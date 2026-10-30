@@ -151,11 +151,11 @@ func TestStage12_ReloadKeepsRateLimitState(t *testing.T) {
 	}
 	waitEvents(t, r, "account lock", events.Lock, func(e events.Record) bool { return e.Data["key"] == "bob.brown" })
 	r.reloadWith(t, func(s string) string { return strings.Replace(s, `log_level = "debug"`, `log_level = "info"`, 1) })
-	before := r.dc.Calls().Binds
+	before := r.dc.Calls().UserBinds()
 	if err := c.Bind("bob.brown@test.aldap", "bob.brown-pass"); !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 		t.Fatalf("locked account after reload: %v", err)
 	}
-	if r.dc.Calls().Binds != before {
+	if r.dc.Calls().UserBinds() != before {
 		t.Error("locked account reached the upstream after reload")
 	}
 	waitEvents(t, r, "still locked", events.BindBlocked, func(e events.Record) bool { return e.Reason == ratelimit.ReasonAccountLocked })

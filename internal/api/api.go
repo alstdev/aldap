@@ -110,7 +110,14 @@ type Options struct {
 	// StreamQueue is the subscription queue of one SSE client (default
 	// 1024); a lagging client is backfilled from the ring buffer by seq.
 	StreamQueue int
+	// StreamBacklog is how many buffered records a stream without
+	// Last-Event-ID/since starts with (default 1000): a fresh client never
+	// replays the whole ring.
+	StreamBacklog int
 }
+
+// DefaultMaxStreams is api.max_streams when the configuration says 0.
+const DefaultMaxStreams = 64
 
 // Route is one endpoint of the API (docs/openapi.yaml).
 type Route struct {
@@ -181,6 +188,12 @@ type Server struct {
 	mu      sync.Mutex
 	servers []*http.Server
 	wg      sync.WaitGroup
+
+	// streams counts the open SSE streams; maxStreams (api.max_streams)
+	// caps them so an events:read token cannot pin unbounded goroutines
+	// and queues.
+	streams    atomic.Int64
+	maxStreams atomic.Int64
 }
 
 // New creates a server without tokens; Configure installs them.
@@ -204,7 +217,11 @@ func New(o Options) *Server {
 	if o.StreamQueue <= 0 {
 		o.StreamQueue = 1024
 	}
+	if o.StreamBacklog <= 0 {
+		o.StreamBacklog = 1000
+	}
 	s := &Server{o: o, log: o.Logger, started: o.Now()}
+	s.maxStreams.Store(DefaultMaxStreams)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.auth.Store(&authState{buckets: newBuckets(0)})
 	return s
@@ -298,6 +315,10 @@ func (s *Server) wrap(k kind, rt route) http.Handler {
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, c *call, scope string) bool {
 	st := s.auth.Load()
 	if c.kind == kindIPC {
+		if scope == ScopeMetrics && !st.metricsEnabled {
+			writeError(w, http.StatusNotFound, "not_found", "metrics are disabled")
+			return false
+		}
 		c.token = "ipc"
 		return true
 	}

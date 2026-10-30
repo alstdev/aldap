@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/argon2"
+
+	"github.com/alstdev/aldap/internal/config"
 )
 
 // Argon2Params are the argon2id cost parameters (SPEC §9: t=3, m=64MiB, p=4).
@@ -120,6 +122,9 @@ func parseArgon2Params(s string) (Argon2Params, error) {
 	}
 	if p.Memory == 0 || p.Time == 0 || p.Threads == 0 {
 		return p, fmt.Errorf("%w: m, t and p are required", ErrBadHash)
+	}
+	if err := config.CheckArgon2Costs(uint64(p.Memory), uint64(p.Time), uint64(p.Threads)); err != nil {
+		return p, fmt.Errorf("%w: %w", ErrBadHash, err)
 	}
 	return p, nil
 }

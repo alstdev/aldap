@@ -260,11 +260,11 @@ func TestStage12b_ProxyProtocol(t *testing.T) {
 	waitEvents(t, r, "ip lock of the header address", events.Lock, func(e events.Record) bool {
 		return e.Data["target"] == "ip" && e.Data["key"] == "10.89.0.1"
 	})
-	before := r.dc.Calls().Binds
+	before := r.dc.Calls().UserBinds()
 	if err := c.Bind("alice.adams@test.aldap", "alice.adams-pass"); err == nil {
 		t.Fatal("locked header address bound")
 	}
-	if r.dc.Calls().Binds != before {
+	if r.dc.Calls().UserBinds() != before {
 		t.Error("locked header address reached the upstream")
 	}
 	// Another client behind the same proxy is not affected.
@@ -321,11 +321,11 @@ func TestStage12b_VirolaAllowCIDRs(t *testing.T) {
 	waitEvents(t, r, "account lock through allow_cidrs", events.Lock, func(e events.Record) bool {
 		return e.Data["target"] == "account" && e.Data["key"] == "bob.brown"
 	})
-	before := r.dc.Calls().Binds
+	before := r.dc.Calls().UserBinds()
 	if err := c.Bind("bob.brown@test.aldap", "bob.brown-pass"); !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 		t.Fatalf("locked account through the application server: %v", err)
 	}
-	if r.dc.Calls().Binds != before {
+	if r.dc.Calls().UserBinds() != before {
 		t.Error("locked account reached the upstream")
 	}
 	waitEvents(t, r, "account_locked", events.BindBlocked, func(e events.Record) bool { return e.Reason == ratelimit.ReasonAccountLocked })

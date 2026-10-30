@@ -1,4 +1,5 @@
 {
+  "_comment": "Allow list for a static Go binary (aldap) under runc/crun: generated from strace of `aldap check` and `aldap run` (docs/AUDIT.md A9-1) plus the calls runc init needs (statx, arch_prctl). socket is limited to AF_UNIX/AF_INET/AF_INET6. Verify after a Go upgrade: docker run --security-opt seccomp=deploy/seccomp.json ... aldap check.",
   "defaultAction": "SCMP_ACT_ERRNO",
   "defaultErrnoRet": 1,
   "archMap": [
@@ -8,19 +9,29 @@
   "syscalls": [
     {
       "names": [
-        "accept4", "bind", "brk", "clock_gettime", "clock_nanosleep", "clone", "clone3", "close",
-        "connect", "epoll_create1", "epoll_ctl", "epoll_pwait", "epoll_wait", "eventfd2", "execve",
-        "exit", "exit_group", "fcntl", "fstat", "fstatfs", "fsync", "futex", "getcwd", "getdents64",
-        "getpeername", "getpid", "getppid", "getrandom", "getrlimit", "getsockname", "getsockopt",
-        "gettid", "getuid", "getgid", "geteuid", "getegid", "ioctl", "listen", "lseek", "madvise",
-        "membarrier", "mkdirat", "mmap", "mprotect", "munmap", "nanosleep", "newfstatat",
-        "openat", "pipe2", "prctl", "pread64", "prlimit64", "pwrite64", "read", "readlinkat",
-        "recvfrom", "recvmsg", "renameat", "rseq", "rt_sigaction", "rt_sigprocmask", "rt_sigreturn",
-        "sched_getaffinity", "sched_yield", "sendmsg", "sendto", "setsockopt", "set_robust_list",
-        "set_tid_address", "shutdown", "sigaltstack", "socket", "tgkill", "uname", "unlinkat",
-        "wait4", "write", "writev"
+        "accept4", "access", "arch_prctl", "bind", "brk", "capget", "clock_getres",
+        "clock_gettime", "clock_nanosleep", "clone", "clone3", "close", "close_range", "connect",
+        "dup", "dup3", "epoll_create1", "epoll_ctl", "epoll_pwait", "epoll_pwait2", "epoll_wait",
+        "eventfd2", "execve", "exit", "exit_group", "faccessat", "faccessat2", "fchmod",
+        "fchmodat", "fcntl", "fdatasync", "flock", "fstat", "fstatfs", "fsync", "ftruncate",
+        "futex", "getcwd", "getdents64", "getegid", "geteuid", "getgid", "getgroups",
+        "getpeername", "getpgrp", "getpid", "getppid", "getrandom", "getrlimit", "getrusage",
+        "getsockname", "getsockopt", "gettid", "gettimeofday", "getuid", "ioctl", "kill", "listen",
+        "lseek", "madvise", "membarrier", "mkdirat", "mmap", "mprotect", "mremap", "munmap",
+        "nanosleep", "newfstatat", "openat", "openat2", "pidfd_open", "pidfd_send_signal", "pipe2",
+        "ppoll", "prctl", "pread64", "prlimit64", "pselect6", "pwrite64", "read", "readlinkat",
+        "readv", "recvfrom", "recvmsg", "renameat", "restart_syscall", "rseq", "rt_sigaction",
+        "rt_sigpending", "rt_sigprocmask", "rt_sigreturn", "rt_sigsuspend", "rt_sigtimedwait",
+        "rt_tgsigqueueinfo", "sched_getaffinity", "sched_setaffinity", "sched_yield", "sendmsg",
+        "sendto", "set_robust_list", "set_tid_address", "setitimer", "setsockopt", "shutdown",
+        "sigaltstack", "socketpair", "statfs", "statx", "sysinfo", "tgkill", "timer_create",
+        "timer_delete", "timer_settime", "timerfd_create", "timerfd_settime", "tkill", "umask",
+        "uname", "unlinkat", "utimensat", "wait4", "waitid", "write", "writev"
       ],
       "action": "SCMP_ACT_ALLOW"
-    }
+    },
+    { "names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{ "index": 0, "value": 1, "op": "SCMP_CMP_EQ" }] },
+    { "names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{ "index": 0, "value": 2, "op": "SCMP_CMP_EQ" }] },
+    { "names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{ "index": 0, "value": 10, "op": "SCMP_CMP_EQ" }] }
   ]
 }

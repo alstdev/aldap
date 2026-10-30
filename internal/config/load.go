@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -131,6 +132,9 @@ func (l Loader) loadFile(doc *document, path string, followIncludes bool) error 
 		}
 		sort.Strings(matches)
 		for _, m := range matches {
+			if err := l.checkIncludeScope(m); err != nil {
+				return err
+			}
 			if err := l.loadFile(doc, m, false); err != nil {
 				return err
 			}
@@ -143,7 +147,7 @@ func (l Loader) decode(doc *document, path, data string) error {
 	doc.Upstream, doc.Profile = nil, nil
 	md, err := toml.Decode(data, doc)
 	if err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return fmt.Errorf("%s: %w", path, sanitizeTOMLError(err))
 	}
 	for name, prim := range doc.Upstream {
 		if _, dup := doc.Upstreams[name]; dup {
@@ -238,3 +242,46 @@ func setStr(dst *string, v string) {
 		*dst = v
 	}
 }
+
+// ErrIncludeScope reports an included file that defines more than
+// upstream/profile tables.
+var ErrIncludeScope = errors.New("an included file may define only [upstream.<name>] and [profile.<name>] tables")
+
+// checkIncludeScope refuses an included file that redefines global
+// sections (SPEC §3.4: include is for profiles and upstreams in separate
+// files): a delegated conf.d must not be able to switch rate limiting off,
+// enable the API with its own token or change the log level.
+func (l Loader) checkIncludeScope(path string) error {
+	data, err := l.readFile()(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	var top map[string]any
+	if _, err := toml.Decode(string(data), &top); err != nil {
+		return fmt.Errorf("%s: %w", path, sanitizeTOMLError(err))
+	}
+	for k := range top {
+		if k != "upstream" && k != "profile" {
+			return fmt.Errorf("%s: %w: found [%s]", path, ErrIncludeScope, k)
+		}
+	}
+	return nil
+}
+
+// sanitizeTOMLError keeps a TOML syntax error useful (line, last key, the
+// kind of problem) but drops the quoted input the decoder echoes: an
+// unquoted bind_password = hunter would otherwise print the password in
+// aldap check, the daemon log and the PUT /v1/config answer.
+func sanitizeTOMLError(err error) error {
+	var pe toml.ParseError
+	if !errors.As(err, &pe) {
+		return err
+	}
+	msg := tomlQuoted.ReplaceAllString(pe.Message, `"…"`)
+	if pe.LastKey != "" {
+		return fmt.Errorf("line %d (key %s): %s", pe.Position.Line, pe.LastKey, msg)
+	}
+	return fmt.Errorf("line %d: %s", pe.Position.Line, msg)
+}
+
+var tomlQuoted = regexp.MustCompile(`"[^"]*"`)

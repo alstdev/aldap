@@ -178,7 +178,12 @@ func lockKey(target, key string) (string, error) {
 		if key == "" || len(key) > 512 {
 			return "", errors.New("key must be 1–512 characters")
 		}
-		return strings.ToLower(key), nil
+		// The key the bind path counts the account under: any form of the
+		// name (UPN, DOMAIN\user, bare) reaches the same lock.
+		if key = ratelimit.AccountKey(key); key == "" {
+			return "", errors.New("key does not name an account")
+		}
+		return key, nil
 	}
 	return "", fmt.Errorf("target %q: use ip or account", target)
 }
@@ -292,14 +297,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, _ *call) {
 	}
 	types := eventFilter(r)
 	out := []events.Record{}
-	for _, rec := range s.o.Bus.Since(since, 0) {
+	// Walk the ring in place: only the records answered are copied.
+	s.o.Bus.Each(since, func(rec events.Record) bool {
 		if keep(types, rec) {
 			out = append(out, rec)
-			if len(out) == limit {
-				break
-			}
 		}
-	}
+		return len(out) < limit
+	})
 	writeJSON(w, http.StatusOK, out)
 }
 

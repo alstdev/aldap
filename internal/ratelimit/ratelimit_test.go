@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"fmt"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -85,10 +86,13 @@ func TestPolicy_AccountLock(t *testing.T) {
 		t.Fatal("hash")
 	}
 	for i := 1; i <= 3; i++ {
-		if v := p.PreBind("10.0.0.1", "Alice", pw+"x"); !v.Allowed {
+		// A distinct wrong password per attempt: the same pair is admitted
+		// once (in flight) and then answered from the negative cache.
+		h := l.HashPassword([]byte(fmt.Sprintf("wrong-%d", i)))
+		if v := p.PreBind("10.0.0.1", "Alice", h); !v.Allowed {
 			t.Fatalf("attempt %d blocked: %+v", i, v)
 		}
-		wait := p.PostBind("10.0.0.1", "alice", pw, false, "invalid_password", time.Millisecond)
+		wait := p.PostBind("10.0.0.1", "alice", h, false, "invalid_password", time.Millisecond)
 		if want := 250 * time.Millisecond << uint(i-1); wait != want {
 			t.Errorf("attempt %d delay = %v, want %v", i, wait, want)
 		}
@@ -245,13 +249,14 @@ func TestPolicy_BucketsLockdownTarpit(t *testing.T) {
 		c.Tarpit.Enabled, c.Tarpit.Delay, c.Tarpit.MaxConns = true, config.Duration(3*time.Second), 1
 		c.LockResponse = "busy"
 	})
-	// Bind bucket: burst 2, then refill 1/s.
+	// Bind bucket: burst 2, then refill 1/s (distinct accounts so that the
+	// in-flight reservation of one account does not interfere).
 	for i := 0; i < 2; i++ {
-		if v := p.PreBind("10.0.0.6", "a", "h"); !v.Allowed {
+		if v := p.PreBind("10.0.0.6", fmt.Sprintf("a%d", i), "h"); !v.Allowed {
 			t.Fatalf("burst %d: %+v", i, v)
 		}
 	}
-	if v := p.PreBind("10.0.0.6", "a", "h"); v.Allowed || v.Reason != ReasonRateLimited || v.Code != ldap.LDAPResultBusy {
+	if v := p.PreBind("10.0.0.6", "a2", "h"); v.Allowed || v.Reason != ReasonRateLimited || v.Code != ldap.LDAPResultBusy {
 		t.Errorf("over burst: %+v", v)
 	}
 	cl.add(time.Second)
@@ -294,7 +299,7 @@ func TestPolicy_BucketsLockdownTarpit(t *testing.T) {
 	if !l.Attacking("10.0.0.8") || l.Attacking("10.0.0.9") {
 		t.Error("attack flag")
 	}
-	v1 := p.PreBind("10.0.0.8", "a", "h")
+	v1 := p.PreBind("10.0.0.8", "tarpit-user", "h")
 	if !v1.Allowed || v1.Wait != 3*time.Second || v1.Done == nil {
 		t.Fatalf("tarpit verdict: %+v", v1)
 	}
@@ -514,10 +519,15 @@ func TestPolicy_AllowCIDRsKeepAccountLimits(t *testing.T) {
 	if v := p.PreBind(app, "user3", "y"); !v.Allowed {
 		t.Errorf("manual ip lock applied to allow_cidrs: %+v", v)
 	}
-	// Lockdown still applies (it has its own allowlist).
+	// Lockdown keeps serving the application servers of allow_cidrs (an
+	// attacker triggering lockdown.auto must not switch the application
+	// off) and refuses everyone else.
 	l.SetLockdown(true, SourceAPI)
-	if v := p.PreBind(app, "user3", "y"); v.Allowed || v.Reason != ReasonLockdown {
-		t.Errorf("lockdown skipped for allow_cidrs: %+v", v)
+	if v := p.PreBind(app, "user3", "z"); !v.Allowed {
+		t.Errorf("lockdown refused allow_cidrs: %+v", v)
+	}
+	if v := p.PreBind("10.2.0.1", "user3", "y"); v.Allowed || v.Reason != ReasonLockdown {
+		t.Errorf("lockdown skipped for a foreign address: %+v", v)
 	}
 	ev.check(t)
 }

@@ -319,7 +319,7 @@ func (d *daemon) buildProfile(name string, pcfg *config.Profile) (*servedProfile
 		return nil, err
 	}
 	clientPW := ""
-	if pcfg.ClientBind.DN != "" && pcfg.ClientBind.PasswordHash == "" {
+	if pcfg.ClientBind.DN != "" && !pcfg.ClientBind.PasswordHash.IsSet() {
 		pw, warns, err := d.opts.Secrets.Resolve(pcfg.ClientBind.PasswordSource())
 		if err != nil {
 			return nil, fmt.Errorf("profile.%s.client_bind.password: %w", name, err)

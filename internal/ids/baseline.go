@@ -87,6 +87,18 @@ func (e *Engine) base(profile string) *baseline {
 	return b
 }
 
+// Bounds on client-controlled values kept in the baseline sets.
+const (
+	maxBaselineValue = 8192
+	maxBaselineAttrs = 64
+)
+
+// baselineFinding is one value outside the learned baseline.
+type baselineFinding struct {
+	reason, observed string
+	baseline         int
+}
+
 // baselineObserve learns or checks one observation; bind marks a bind
 // (only the IP is relevant).
 func (e *Engine) baselineObserve(profile, ip, connID, base, filterNorm string, attrs []string, now time.Time, bind bool) {
@@ -97,11 +109,7 @@ func (e *Engine) baselineObserve(profile, ip, connID, base, filterNorm string, a
 	}
 	b := e.base(profile)
 	learning := now.Before(e.learnTill)
-	type finding struct {
-		reason, observed string
-		baseline         int
-	}
-	var out []finding
+	var out []baselineFinding
 	check := func(set map[string]bool, key, reason, observed string) {
 		if observed == "" {
 			return
@@ -116,44 +124,66 @@ func (e *Engine) baselineObserve(profile, ip, connID, base, filterNorm string, a
 			return
 		}
 		b.reported[key+observed] = true
-		out = append(out, finding{reason, observed, len(set)})
+		out = append(out, baselineFinding{reason, observed, len(set)})
 	}
 	check(b.ips, "ip:", AnomalyNewIP, ip)
 	if !bind {
+		if len(base) > maxBaselineValue {
+			base = base[:maxBaselineValue]
+		}
 		check(b.bases, "base:", AnomalyNewBase, strings.ToLower(base))
 		check(b.filters, "filter:", AnomalyNewFilter, FilterShape(filterNorm))
-		if len(attrs) > 0 {
-			cp := make([]string, len(attrs))
-			for i, a := range attrs {
-				cp[i] = strings.ToLower(a)
-			}
-			sort.Strings(cp)
-			check(b.attrs, "attrs:", AnomalyNewAttrs, strings.Join(cp, ","))
-		}
-		// Searches per second against the learned p95.
-		sec := now.Truncate(time.Second)
-		if !sec.Equal(b.second) {
-			if learning && !b.second.IsZero() {
-				b.rates = append(b.rates, b.perSecond)
-				if len(b.rates) > 3600 {
-					b.rates = b.rates[len(b.rates)-3600:]
-				}
-			}
-			b.second, b.perSecond = sec, 0
-		}
-		b.perSecond++
-		if !learning && len(b.rates) > 0 && now.Sub(b.lastSpike) >= time.Minute {
-			p95 := percentile(b.rates, 95)
-			if limit := max(2*p95, 10); b.perSecond > limit {
-				b.lastSpike = now
-				out = append(out, finding{AnomalyRPSSpike, strconv.Itoa(b.perSecond), p95})
-			}
+		check(b.attrs, "attrs:", AnomalyNewAttrs, attrSetKey(attrs))
+		if f, ok := b.observeRate(now, learning); ok {
+			out = append(out, f)
 		}
 	}
 	e.mu.Unlock()
 	for _, f := range out {
 		e.anomaly(profile, ip, connID, f.reason, f.observed, f.baseline, now)
 	}
+}
+
+// attrSetKey is the order-independent, lower-cased key of a requested
+// attribute set ("" for none).
+func attrSetKey(attrs []string) string {
+	if len(attrs) > maxBaselineAttrs {
+		attrs = attrs[:maxBaselineAttrs]
+	}
+	if len(attrs) == 0 {
+		return ""
+	}
+	cp := make([]string, len(attrs))
+	for i, a := range attrs {
+		cp[i] = strings.ToLower(a)
+	}
+	sort.Strings(cp)
+	return strings.Join(cp, ",")
+}
+
+// observeRate counts one search in the current second against the learned
+// p95 (rps_spike at most once a minute). The engine lock is held.
+func (b *baseline) observeRate(now time.Time, learning bool) (baselineFinding, bool) {
+	sec := now.Truncate(time.Second)
+	if !sec.Equal(b.second) {
+		if learning && !b.second.IsZero() {
+			b.rates = append(b.rates, b.perSecond)
+			if len(b.rates) > 3600 {
+				b.rates = b.rates[len(b.rates)-3600:]
+			}
+		}
+		b.second, b.perSecond = sec, 0
+	}
+	b.perSecond++
+	if learning || len(b.rates) == 0 || now.Sub(b.lastSpike) < time.Minute {
+		return baselineFinding{}, false
+	}
+	p95 := percentile(b.rates, 95)
+	if b.perSecond <= max(2*p95, 10) {
+		return baselineFinding{}, false
+	}
+	b.lastSpike = now
+	return baselineFinding{AnomalyRPSSpike, strconv.Itoa(b.perSecond), p95}, true
 }
 
 func (e *Engine) anomaly(profile, ip, connID, reason, observed string, baseline int, now time.Time) {

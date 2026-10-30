@@ -52,8 +52,14 @@ type BindError struct {
 	Err  error
 }
 
-// Error never includes the password or the diagnostic text verbatim.
+// Error never includes the password. A credential failure is reported by
+// its reason (and AD data code) only; a directory failure (upstream_error:
+// signing required, TLS required, server error) names the LDAP result so
+// an operator sees why the directory refused, not a generic word.
 func (e *BindError) Error() string {
+	if e.Reason == ReasonUpstreamError && e.Err != nil {
+		return fmt.Sprintf("bind failed: %s: %v", e.Reason, e.Err)
+	}
 	if e.Data != "" {
 		return fmt.Sprintf("bind failed: %s (data %s)", e.Reason, e.Data)
 	}

@@ -100,6 +100,7 @@ func (c *collect) Entry(e listener.Entry) error { c.es = append(c.es, e); return
 func clientSearch(t *testing.T, d *vdir.Directory, filter string, attrs ...string) (listener.Result, []listener.Entry, time.Duration) {
 	t.Helper()
 	c := listener.NewConn("c-9", "virola", &net.TCPAddr{IP: net.IPv4(10, 0, 0, 9), Port: 5000})
+	c.SetBound(listener.Bound{Kind: listener.BindClient, Name: "cn=virola,ou=services,dc=aldap"})
 	w := &collect{}
 	start := time.Now()
 	res := d.Search(context.Background(), c, &listener.SearchRequest{Base: dirUsers, Scope: listener.ScopeSub, Filter: filter, Attrs: attrs}, w)

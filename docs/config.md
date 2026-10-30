@@ -193,6 +193,7 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `api.client_auth` | string | `"none"` | mTLS: none or require. |
 | `api.client_ca` | string |  | CA bundle used to verify client certificates. |
 | `api.rate_limit_rps` | int | `50` | Requests per second per client. |
+| `api.max_streams` | int | `64` | Maximum open SSE event streams (/v1/events/stream) at once. |
 | `api.metrics` | table |  | Prometheus metrics. |
 | `api.metrics.enabled` | bool | `true` | Expose /metrics. |
 | `api.metrics.listen` | string |  | Separate listen address; default the API address. |
@@ -275,7 +276,7 @@ Environment variable names are `ALDAP_` + the key path in upper case with `.` an
 | `profile.<name>.client_bind.password` | secret |  | Service password, inline (warned). |
 | `profile.<name>.client_bind.password_file` | string |  | File holding the service password. |
 | `profile.<name>.client_bind.password_env` | string |  | Environment variable holding the service password. |
-| `profile.<name>.client_bind.password_hash` | string |  | argon2id hash ($argon2id$...) of the service password; alternative to the password forms. |
+| `profile.<name>.client_bind.password_hash` | secret |  | argon2id hash ($argon2id$...) of the service password; alternative to the password forms. Rendered as *** like a secret. |
 | `profile.<name>.user_bind` | table |  | User bind policy. |
 | `profile.<name>.user_bind.allow` | bool | `true` | Forward user binds to the upstream. |
 | `profile.<name>.user_bind.default_domain` | string |  | Domain appended to bare account names. |

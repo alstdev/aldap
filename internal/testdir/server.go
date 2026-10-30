@@ -31,8 +31,12 @@ var (
 type Counts struct {
 	// Conns is the number of accepted client connections.
 	Conns int64
-	// Binds is the number of bind requests handled.
+	// Binds is the number of bind requests handled (service-account binds
+	// of health probes, pools and identity lookups included).
 	Binds int64
+	// ServiceBinds is the part of Binds made with the service account
+	// (WithServiceAccount); Binds - ServiceBinds are user binds.
+	ServiceBinds int64
 	// Searches is the number of search requests handled (RootDSE included).
 	Searches int64
 	// RootDSE is the number of RootDSE reads.
@@ -49,6 +53,7 @@ type options struct {
 	tls         bool
 	maxPageSize int
 	adBindCodes bool
+	serviceDN   string
 	anonSearch  bool
 	noStartTLS  bool
 	hostName    string
@@ -74,6 +79,10 @@ func WithMaxPageSize(n int) Option { return func(o *options) { o.maxPageSize = n
 
 // WithADBindCodes toggles AD diagnostics on failed binds (default on).
 func WithADBindCodes(on bool) Option { return func(o *options) { o.adBindCodes = on } }
+
+// WithServiceAccount names the DN whose binds count as ServiceBinds, so tests
+// can assert on user binds only (health probes and pools bind it too).
+func WithServiceAccount(dn string) Option { return func(o *options) { o.serviceDN = dn } }
 
 // WithAnonymousSearch allows searches on unbound connections (AD denies them).
 func WithAnonymousSearch() Option { return func(o *options) { o.anonSearch = true } }
@@ -110,6 +119,7 @@ type Server struct {
 
 	conns64   atomic.Int64
 	binds     atomic.Int64
+	svcBinds  atomic.Int64
 	searches  atomic.Int64
 	rootDSE   atomic.Int64
 	delayNano atomic.Int64
@@ -388,13 +398,14 @@ func (s *Server) SetDelay(d time.Duration) { s.delayNano.Store(int64(d)) }
 
 // Calls returns a snapshot of the call counters.
 func (s *Server) Calls() Counts {
-	return Counts{Conns: s.conns64.Load(), Binds: s.binds.Load(), Searches: s.searches.Load(), RootDSE: s.rootDSE.Load()}
+	return Counts{Conns: s.conns64.Load(), Binds: s.binds.Load(), ServiceBinds: s.svcBinds.Load(), Searches: s.searches.Load(), RootDSE: s.rootDSE.Load()}
 }
 
 // ResetCalls zeroes the call counters.
 func (s *Server) ResetCalls() {
 	s.conns64.Store(0)
 	s.binds.Store(0)
+	s.svcBinds.Store(0)
 	s.searches.Store(0)
 	s.rootDSE.Store(0)
 }
@@ -456,5 +467,8 @@ func FixturePath() string {
 // StartFixture starts a server seeded with testdata/ad.ldif.
 func StartFixture(tb testing.TB, opts ...Option) *Server {
 	tb.Helper()
-	return Start(tb, append([]Option{WithLDIF(FixturePath())}, opts...)...)
+	return Start(tb, append([]Option{WithLDIF(FixturePath()), WithServiceAccount("CN=svc-aldap,CN=Users,DC=test,DC=aldap")}, opts...)...)
 }
+
+// UserBinds is the number of binds that were not made with the service account.
+func (c Counts) UserBinds() int64 { return c.Binds - c.ServiceBinds }

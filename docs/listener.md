@@ -44,6 +44,12 @@ control codecs; `gldap` stays the server of `internal/testdir`
    afterwards. The BER header is parsed before any content is buffered; a
    message longer than `limits.max_request_bytes` closes the connection with a
    Notice of Disconnection (`protocolError`) and `rate_limited{reason=oversize}`.
+   Before the decoder builds a packet tree, an allocation-free pre-scan
+   (`scanBER`) refuses a message with nesting of 64 or more levels (SPEC §9),
+   indefinite or truncated lengths, or more than 10 000 TLV elements (the
+   decoder allocates ~370 bytes per element: a 1 MiB request of empty
+   attribute names would cost ~190 MiB); the answer is a `protocolError`
+   notice and the connection ends.
 4. Requests are processed sequentially per connection (Bind semantics of
    RFC 4511 §4.2.1 for free; Abandon is a no-op, RFC 4511 §4.11).
 5. Operations:
@@ -126,7 +132,12 @@ Upstream outcomes: `*upstream.BindError` → `invalidCredentials` with the real
 reason in `bind_fail` (`locked_in_ad` at level medium); `ErrUnavailable` →
 `unavailable`. `user_bind.require_membership` runs the profile filter against
 the authenticated user afterwards (`bind_fail{not_member}`). `user_bind.allow
-= false` refuses every non-client bind with `unknown_account`. The password
+= false` refuses every non-client bind with `unknown_account`. Without
+`require_membership` only the virtual-DN form is restricted to the profile (its
+lookup applies `filter`/`exclude_filter`); a UPN, `DOMAIN\user` or bare name is
+forwarded as is (SPEC §4.3), so an account the profile hides can still bind —
+the configuration check warns when `exclude_filter` or a non-default `filter`
+is set without `require_membership = true`. The password
 reaches go-ldap as a string copy; the wire buffer is zeroed by the listener.
 
 ## TLS

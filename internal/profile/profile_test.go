@@ -5,12 +5,14 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alstdev/aldap/internal/config"
 	"github.com/alstdev/aldap/internal/ldapfilter"
+	"github.com/alstdev/aldap/internal/secret"
 )
 
-var fastArgon = Argon2Params{Time: 1, Memory: 1024, Threads: 1, KeyLen: 16, SaltLen: 8}
+var fastArgon = Argon2Params{Time: 1, Memory: 8192, Threads: 1, KeyLen: 16, SaltLen: 8}
 
 func testProfile() *config.Profile {
 	p := config.DefaultProfile()
@@ -92,7 +94,7 @@ func TestClientBind(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := testProfile()
-	p.ClientBind.PasswordHash = h.String()
+	p.ClientBind.PasswordHash = secret.Inline(h.String())
 	r2 := compile(t, p, "")
 	if !r2.VerifyClientPassword([]byte("from-hash")) || r2.VerifyClientPassword([]byte("wrong")) {
 		t.Error("hash form verification")
@@ -105,7 +107,7 @@ func TestArgon2_PHC(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := h.String()
-	if !strings.HasPrefix(s, "$argon2id$v=19$m=1024,t=1,p=1$") {
+	if !strings.HasPrefix(s, "$argon2id$v=19$m=8192,t=1,p=1$") {
 		t.Errorf("phc = %s", s)
 	}
 	back, err := ParsePasswordHash(s)
@@ -119,15 +121,15 @@ func TestArgon2_PHC(t *testing.T) {
 		t.Error("zero params")
 	}
 	for _, bad := range []string{
-		"", "$argon2i$v=19$m=1024,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=18$m=1024,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=19$m=1024,t=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=19$m=1024,t=1,p=1,x=2$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=19$m=1024,t=0,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=19$m=1024,t=1,p=999$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=19$m=1024,t=1,p=1$!!$aGFzaGhhc2hoYXNoaGFzaA",
-		"$argon2id$v=19$m=1024,t=1,p=1$c2FsdHNhbHQ$c2hvcnQ",
-		"$argon2id$v=19$m=1024,t=1,p=1$c2FsdHNhbHQ$!!",
+		"", "$argon2i$v=19$m=8192,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=18$m=8192,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=19$m=8192,t=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=19$m=8192,t=1,p=1,x=2$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=19$m=8192,t=0,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=19$m=8192,t=1,p=999$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=19$m=8192,t=1,p=1$!!$aGFzaGhhc2hoYXNoaGFzaA",
+		"$argon2id$v=19$m=8192,t=1,p=1$c2FsdHNhbHQ$c2hvcnQ",
+		"$argon2id$v=19$m=8192,t=1,p=1$c2FsdHNhbHQ$!!",
 		"$argon2id$v=19$m,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
 		"$argon2id$v=19$m=99999999999,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA",
 	} {
@@ -244,5 +246,39 @@ func TestNormalizeBindName(t *testing.T) {
 	}
 	if got := r2.NormalizeBindName("bob"); got.Upstream != "bob" {
 		t.Errorf("bare without default domain = %+v", got)
+	}
+}
+
+// The padding floor of failed binds follows the real client_bind
+// verifications (moving average) and never exceeds 4× the probe.
+func TestClientVerifyCost_Adapts(t *testing.T) {
+	r := compile(t, testProfile(), "S3CR3T-client")
+	probe := r.ClientVerifyCost()
+	if probe <= 0 {
+		t.Fatalf("probe = %v", probe)
+	}
+	r.observeClientVerify(3 * probe)
+	if got := r.ClientVerifyCost(); got <= probe || got >= 3*probe {
+		t.Errorf("floor after one slow verification = %v (probe %v), want in (probe, 3×probe)", got, probe)
+	}
+	for i := 0; i < 64; i++ {
+		r.observeClientVerify(100 * probe)
+	}
+	if got := r.ClientVerifyCost(); got != 4*probe {
+		t.Errorf("floor under a flood = %v, want the 4× cap %v", got, 4*probe)
+	}
+	for i := 0; i < 64; i++ {
+		r.observeClientVerify(probe / 2)
+	}
+	if got := r.ClientVerifyCost(); got > probe {
+		t.Errorf("floor did not come back: %v (probe %v)", got, probe)
+	}
+	// Without a client bind the floor stays 0 and observing is a no-op.
+	p := testProfile()
+	p.ClientBind.DN = ""
+	r2 := compile(t, p, "")
+	r2.observeClientVerify(time.Second)
+	if r2.ClientVerifyCost() != 0 {
+		t.Errorf("floor without client bind = %v", r2.ClientVerifyCost())
 	}
 }

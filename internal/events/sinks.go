@@ -58,6 +58,12 @@ func NewFileSink(path string, maxMB, maxFiles int, compress bool) (*FileSink, er
 }
 
 func (s *FileSink) open() error {
+	// Never append events through a link or to a device/FIFO/directory:
+	// the path must be absent or a regular file (also guards the CA key or
+	// the configuration against being named here).
+	if fi, err := os.Lstat(s.Path); err == nil && !fi.Mode().IsRegular() {
+		return fmt.Errorf("events: open %s: not a regular file (%s)", s.Path, fi.Mode().Type())
+	}
 	f, err := os.OpenFile(s.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("events: open %s: %w", s.Path, err)

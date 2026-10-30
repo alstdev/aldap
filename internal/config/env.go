@@ -26,6 +26,16 @@ var ErrAmbiguousEnv = errors.New("ambiguous environment variable")
 type envLeaf struct {
 	segs []string
 	env  string
+	// secret marks an inline secret leaf (secret.Inline), whose _FILE and
+	// _ENV siblings are the other sources of the same secret.
+	secret bool
+}
+
+// ambiguousTable is the panic value namedEntry raises; setLeaf turns it into
+// ErrAmbiguousTable.
+type ambiguousTable struct {
+	tableName string
+	names     []string
 }
 
 // Wildcard reports whether the leaf lives under a named table.
@@ -59,7 +69,7 @@ func walkEnv(t reflect.Type, segs []string, out *[]envLeaf) {
 		case isNamedTable(ft):
 			walkEnv(ft.Elem().Elem(), append(path, "*"), out)
 		case envSettable(ft):
-			*out = append(*out, envLeaf{segs: path, env: envName(path)})
+			*out = append(*out, envLeaf{segs: path, env: envName(path), secret: ft == inlineType})
 		case ft.Kind() == reflect.Struct:
 			walkEnv(ft, path, out)
 		}
@@ -118,6 +128,9 @@ func applyEnv(cfg *Config, environ []string) error {
 		}
 	}
 	sort.Strings(environ)
+	if err := checkEnvSecretSources(environ); err != nil {
+		return err
+	}
 	for _, kv := range environ {
 		name, value, _ := strings.Cut(kv, "=")
 		if !strings.HasPrefix(name, EnvPrefix) || envIgnored(name) {
@@ -171,7 +184,16 @@ func matchWild(pattern, name string) (string, bool) {
 // setLeaf navigates cfg along the leaf path, creating a named table when
 // needed, and sets the value. Setting any form of a secret clears the other
 // forms, so the environment wins over the file (SPEC §3.1).
-func setLeaf(cfg *Config, l envLeaf, tableName, value string) error {
+func setLeaf(cfg *Config, l envLeaf, tableName, value string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			at, ok := r.(ambiguousTable)
+			if !ok {
+				panic(r)
+			}
+			err = fmt.Errorf("%s: %w: %s", at.tableName, ErrAmbiguousTable, strings.Join(at.names, ", "))
+		}
+	}()
 	v := reflect.ValueOf(cfg).Elem()
 	var parent reflect.Value
 	var lastKey string
@@ -194,15 +216,79 @@ func setLeaf(cfg *Config, l envLeaf, tableName, value string) error {
 	return nil
 }
 
-// namedEntry returns the entry of a named table, creating it with defaults.
+// ErrAmbiguousTable reports two configured tables that share one
+// environment spelling (my-app and my_app both become MY_APP).
+var ErrAmbiguousTable = errors.New("several tables share this environment name")
+
+// checkEnvSecretSources refuses two forms of one secret from the environment
+// (X and X_FILE, X and X_ENV, X_FILE and X_ENV): SPEC §3.2 allows exactly one
+// source; a silent last-one-wins would hide a misconfiguration.
+func checkEnvSecretSources(environ []string) error {
+	seen := map[string]string{}
+	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		if !strings.HasPrefix(name, EnvPrefix) || envIgnored(name) {
+			continue
+		}
+		base := name
+		switch {
+		case strings.HasSuffix(name, "_FILE"):
+			base = strings.TrimSuffix(name, "_FILE")
+		case strings.HasSuffix(name, "_ENV"):
+			base = strings.TrimSuffix(name, "_ENV")
+		}
+		if !envIsSecretBase(base) {
+			continue
+		}
+		if other, dup := seen[base]; dup {
+			return fmt.Errorf("%s and %s: %w", other, name, secret.ErrMultipleSources)
+		}
+		seen[base] = name
+	}
+	return nil
+}
+
+// envIsSecretBase reports whether an environment name (without _FILE/_ENV)
+// addresses an inline secret leaf.
+func envIsSecretBase(name string) bool {
+	for _, l := range envLeaves() {
+		if !l.secret {
+			continue
+		}
+		if l.wildcard() {
+			if _, ok := matchWild(l.env, name); ok {
+				return true
+			}
+		} else if l.env == name {
+			return true
+		}
+	}
+	return false
+}
+
+// namedEntry returns the entry of a named table, creating it with defaults;
+// it panics (caught as an error by the caller) when several existing tables
+// share the environment spelling.
 func namedEntry(m reflect.Value, tableName string) reflect.Value {
 	if m.IsNil() {
 		m.Set(reflect.MakeMap(m.Type()))
 	}
+	var found []reflect.Value
 	for _, k := range m.MapKeys() {
 		if normalizeName(k.String()) == tableName {
-			return m.MapIndex(k).Elem()
+			found = append(found, k)
 		}
+	}
+	if len(found) > 1 {
+		names := make([]string, len(found))
+		for i, k := range found {
+			names[i] = k.String()
+		}
+		sort.Strings(names)
+		panic(ambiguousTable{tableName: tableName, names: names})
+	}
+	if len(found) == 1 {
+		return m.MapIndex(found[0]).Elem()
 	}
 	var entry reflect.Value
 	switch m.Type().Elem() {

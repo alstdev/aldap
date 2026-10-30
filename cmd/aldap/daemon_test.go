@@ -240,6 +240,14 @@ func TestDaemon_TLSTermination(t *testing.T) {
 	if err := c.Bind("alice.adams@test.aldap", "wrong"); !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 		t.Errorf("wrong password: %v", err)
 	}
+	// A failed bind leaves the connection anonymous: no search until a bind
+	// succeeds (FP-1).
+	if _, err := c.Search(ldap.NewSearchRequest(tUsersDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false, "(objectClass=user)", []string{"mail"}, nil)); !ldap.IsErrorWithCode(err, ldap.LDAPResultStrongAuthRequired) {
+		t.Errorf("search after a failed bind: %v, want strongAuthRequired", err)
+	}
+	if err := c.Bind(tClientDN, clientPassword); err != nil {
+		t.Fatalf("client re-bind: %v", err)
+	}
 	// KP: attribute outside the allowlist is absent, a filter on it finds nothing without an error.
 	res = search(t, c, tUsersDN, "(objectClass=user)", "telephoneNumber", "mail")
 	if len(res.Entries) == 0 || res.Entries[0].GetAttributeValue("telephoneNumber") != "" || res.Entries[0].GetAttributeValue("mail") == "" {

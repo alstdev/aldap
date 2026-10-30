@@ -3,6 +3,7 @@ package vdir
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-ldap/ldap/v3"
 
@@ -116,6 +118,10 @@ type Directory struct {
 
 	memMu sync.Mutex
 	mem   *membership
+
+	// ids caches the canonical identity of presented bind names (rekey).
+	idMu sync.Mutex
+	ids  map[string]identityEntry
 }
 
 var _ listener.Handler = (*Directory)(nil)
@@ -219,6 +225,9 @@ type searchCtx struct {
 	hits    int
 	stale   time.Duration
 	replica bool
+	// truncated marks a post-filtered search whose candidate set from the
+	// upstream was cut at the size limit: the answer may be incomplete.
+	truncated bool
 }
 
 // Search answers a client search (SPEC §4.2). A paged request with a
@@ -357,6 +366,9 @@ func (d *Directory) search(ctx context.Context, sc *searchCtx) (listener.Result,
 		return listener.Result{Code: ldap.LDAPResultNoSuchObject}, nil
 	}
 	d.detectTrap(sc, kind, rdn)
+	if res, ok := d.requireBind(sc, kind); !ok {
+		return res, nil
+	}
 	out, res := d.entriesFor(ctx, sc, kind, rdn)
 	if res.Code != ldap.LDAPResultSuccess {
 		return res, nil
@@ -365,6 +377,26 @@ func (d *Directory) search(ctx context.Context, sc *searchCtx) (listener.Result,
 		return listener.Success, out
 	}
 	return d.sizeLimit(sc, out)
+}
+
+// requireBind refuses a search of the virtual tree on a connection that has
+// not completed a client or user bind while anonymous_bind is off: an
+// anonymous session has no rights (SPEC §4.3, RFC 4513 §5.1), and a
+// connection that never bound is anonymous (RFC 4511 §4.2.1). The root DSE
+// and the subschema stay readable by everyone (RFC 4512 §5.1); a honeypot
+// answers everyone and counts every search (SPEC §4.5).
+func (d *Directory) requireBind(sc *searchCtx, kind profile.BaseKind) (listener.Result, bool) {
+	if d.rules.AnonymousBind || d.rules.Mode == "honeypot" || kind == profile.BaseRootDSE || kind == profile.BaseSubschema {
+		return listener.Result{}, true
+	}
+	if k := sc.conn.Bound().Kind; k == listener.BindClient || k == listener.BindUser {
+		return listener.Result{}, true
+	}
+	ev := sc.conn.Event(events.OpDenied, events.LevelMedium)
+	ev.Data = map[string]any{"op": "search", "reason": "not_bound"}
+	d.ev.Emit(ev)
+	d.log.Info("search refused: no bind", "conn_id", sc.conn.ID(), "client_ip", sc.conn.ClientIP())
+	return listener.Result{Code: ldap.LDAPResultStrongAuthRequired, Diagnostic: "a successful bind is required"}, false
 }
 
 // detectTrap raises the honeytoken event for a search that targets a trap
@@ -498,14 +530,25 @@ func (d *Directory) groups(ctx context.Context, sc *searchCtx, name string) ([]l
 	return out, listener.Success
 }
 
-// sizeLimit applies the client sizeLimit and limits.max_result_size.
-func (d *Directory) sizeLimit(sc *searchCtx, out []listener.Entry) (listener.Result, []listener.Entry) {
+// candidateLimit is the effective size limit of a search: the smaller of
+// the client's sizeLimit and limits.max_result_size (0 = none).
+func (d *Directory) candidateLimit(sc *searchCtx) int {
 	limit := d.rules.Limits.MaxResultSize
 	if sc.req.SizeLimit > 0 && (limit <= 0 || sc.req.SizeLimit < limit) {
 		limit = sc.req.SizeLimit
 	}
+	return limit
+}
+
+// sizeLimit applies the client sizeLimit and limits.max_result_size; a
+// post-filtered search whose candidates were cut is incomplete and says so.
+func (d *Directory) sizeLimit(sc *searchCtx, out []listener.Entry) (listener.Result, []listener.Entry) {
+	limit := d.candidateLimit(sc)
 	if limit > 0 && len(out) > limit {
 		return listener.Result{Code: ldap.LDAPResultSizeLimitExceeded}, out[:limit]
+	}
+	if sc.truncated {
+		return listener.Result{Code: ldap.LDAPResultSizeLimitExceeded}, out
 	}
 	return listener.Success, out
 }
@@ -663,9 +706,12 @@ func (d *Directory) users(ctx context.Context, sc *searchCtx, rdn string) ([]lis
 			d.emitStale(sc, len(merged))
 		}
 	}
+	if sc.post != nil && len(merged) > d.candidateLimit(sc) {
+		sc.truncated = true
+	}
 	traps := len(merged)
 	for _, h := range d.rules.Honeytokens() {
-		if rdn == "" || strings.EqualFold(h.Attrs[d.rules.RDNAttr][0], rdn) {
+		if rdn == "" || strings.EqualFold(h.First(d.rules.RDNAttr), rdn) {
 			merged = append(merged, honeytokenEntry(h))
 		}
 	}
@@ -677,15 +723,22 @@ func (d *Directory) users(ctx context.Context, sc *searchCtx, rdn string) ([]lis
 		}
 		mem = m
 	}
+	return d.renderUsers(sc, merged, traps, mem), listener.Success
+}
+
+// renderUsers turns the merged upstream entries (the first traps of them
+// are upstream, the rest honeytokens) into virtual user entries that match
+// the filter, sorted by DN.
+func (d *Directory) renderUsers(sc *searchCtx, merged []upstream.Entry, traps int, mem *membership) []listener.Entry {
 	rdns := map[string]int{}
 	for _, e := range merged {
-		rdns[strings.ToLower(e.First(d.rules.RDNAttr))]++
+		rdns[strings.ToLower(d.virtualRDN(e))]++
 	}
 	out := make([]listener.Entry, 0, len(merged))
 	for i, e := range merged {
-		collision := rdns[strings.ToLower(e.First(d.rules.RDNAttr))] > 1
+		collision := rdns[strings.ToLower(d.virtualRDN(e))] > 1
 		if collision {
-			d.log.Warn("virtual RDN collision", "rdn", e.First(d.rules.RDNAttr), "upstream_dn", e.DN)
+			d.log.Warn("virtual RDN collision", "rdn", d.virtualRDN(e), "upstream_dn", e.DN)
 		}
 		full := d.transform(e, mem, collision)
 		// Upstream entries were selected by the directory and need only the
@@ -697,7 +750,7 @@ func (d *Directory) users(ctx context.Context, sc *searchCtx, rdn string) ([]lis
 		out = append(out, full.project(sc.want, sc.all))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].DN < out[j].DN })
-	return out, listener.Success
+	return out
 }
 
 // fetchUsers runs the upstream searches over the profile bases in parallel
@@ -709,8 +762,13 @@ func (d *Directory) fetchUsers(ctx context.Context, sc *searchCtx) ([]upstream.E
 		limit = sc.req.SizeLimit
 	}
 	fetch := 0
-	if limit > 0 && sc.post == nil {
-		fetch = limit + 1 // one more to detect the overflow; a post-filter needs the whole set
+	if limit > 0 {
+		// One more than the limit detects the overflow. A post-filter is
+		// evaluated on the same bounded candidate set: a search must never
+		// pull the whole directory (one filter term on memberOf or a
+		// computed attribute would otherwise cost a full scan per request);
+		// a cut candidate set is answered sizeLimitExceeded.
+		fetch = limit + 1
 	}
 	results := make([]*upstream.Result, len(d.rules.Bases))
 	errs := make([]error, len(d.rules.Bases))
@@ -772,15 +830,32 @@ func (d *Directory) dedupeKey(e upstream.Entry) string {
 	return "dn:" + canonicalDN(e.DN)
 }
 
+// opaqueRDN names an entry that has no rdn_attr value: the hex objectGUID
+// or, without one, a hash of the upstream DN. The real DN must never become
+// a virtual RDN (it would reveal the directory's structure to every client).
+func (d *Directory) opaqueRDN(e upstream.Entry) string {
+	if g := e.First(attrObjectGUID); g != "" {
+		return hex.EncodeToString([]byte(g))
+	}
+	sum := sha256.Sum256([]byte(canonicalDN(e.DN)))
+	return hex.EncodeToString(sum[:16])
+}
+
+// virtualRDN is the rdn_attr value of an entry, or its opaque stand-in.
+func (d *Directory) virtualRDN(e upstream.Entry) string {
+	if rdn := e.First(d.rules.RDNAttr); rdn != "" {
+		return rdn
+	}
+	d.log.Debug("entry without rdn_attr gets an opaque RDN", "rdn_attr", d.rules.RDNAttr)
+	return d.opaqueRDN(e)
+}
+
 // transform maps an upstream entry to its full virtual form (SPEC §4.2
 // step 6): virtual DN from rdn_attr, allowed attributes renamed, computed
 // attributes evaluated, object classes mapped and memberOf set from the
 // virtual groups. Masking and projection happen afterwards.
 func (d *Directory) transform(e upstream.Entry, mem *membership, collision bool) *entry {
-	rdn := e.First(d.rules.RDNAttr)
-	if rdn == "" {
-		rdn = e.DN
-	}
+	rdn := d.virtualRDN(e)
 	out := &entry{dn: d.virtualUserDN(rdn, e.First(attrObjectGUID), e.DN, collision)}
 	for _, client := range d.rules.AllowedAttrs() {
 		if d.rules.IsVirtualAttr(client) {
@@ -857,9 +932,20 @@ type pagingState struct {
 
 const pagingKey = "vdir.paging"
 
+// pagingTTL is how long an unfinished paged search keeps its merged result
+// on the connection; a client that abandons cursors cannot pin memory for
+// the life of the connection.
+const pagingTTL = 10 * time.Minute
+
 func (d *Directory) pagingStates(c *listener.Conn) map[string]*pagingState {
 	if v, ok := c.Load(pagingKey); ok {
 		if m, ok := v.(map[string]*pagingState); ok {
+			cut := d.now().Add(-pagingTTL)
+			for k, st := range m {
+				if st.created.Before(cut) {
+					delete(m, k)
+				}
+			}
 			return m
 		}
 	}
@@ -932,6 +1018,41 @@ func (d *Directory) evictOldest(states map[string]*pagingState) {
 
 // ---------------------------------------------------------------- events
 
+// Bounds on client-controlled values copied into events, logs and tables
+// (SPEC §9: the ring buffer must stay bounded whatever the request carries).
+const (
+	maxEventNames = 64   // attribute names kept per list in a search event
+	maxBindName   = 1024 // bytes of a bind name kept as account
+)
+
+// clipString cuts s to at most n bytes (on a rune boundary) with a marker.
+func clipString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	const marker = "…"
+	cut := n - len(marker)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + marker
+}
+
+// clipList keeps the first n names (each clipped) and returns how many
+// were dropped.
+func clipList(list []string, n int) ([]string, int) {
+	dropped := 0
+	if len(list) > n {
+		dropped = len(list) - n
+		list = list[:n]
+	}
+	out := make([]string, len(list))
+	for i, v := range list {
+		out[i] = clipString(v, ldapfilter.DefaultMaxDNLen)
+	}
+	return out, dropped
+}
+
 // redactFilter renders the normalized filter with password values hidden.
 func redactFilter(f *ldapfilter.Filter) string {
 	if f == nil {
@@ -960,20 +1081,32 @@ func (d *Directory) emitSearch(sc *searchCtx, res listener.Result, results int) 
 	ev.UpstreamServer = sc.server
 	ev.Duration = d.now().Sub(sc.start)
 	data := map[string]any{
-		"base": sc.req.Base, "scope": sc.req.Scope.String(), "filter_norm": redactFilter(sc.filter),
+		"base": clipString(sc.req.Base, ldapfilter.DefaultMaxDNLen), "scope": sc.req.Scope.String(), "filter_norm": redactFilter(sc.filter),
 		"results": results, "upstream_queries": sc.queries, "cache_hit": sc.cacheHit(), "result_code": res.Code,
 	}
 	if sc.filter == nil {
 		data["filter_norm"] = "(invalid)"
 	}
+	// Client-controlled lists are cut (the event stays bounded whatever the
+	// request carried); the count of dropped names is kept.
+	truncated := 0
 	if len(sc.req.Attrs) > 0 {
-		data["attrs_requested"] = sc.req.Attrs
+		var n int
+		data["attrs_requested"], n = clipList(sc.req.Attrs, maxEventNames)
+		truncated += n
 	}
 	if len(sc.denied) > 0 {
-		data["attrs_denied"] = sc.denied
+		var n int
+		data["attrs_denied"], n = clipList(sc.denied, maxEventNames)
+		truncated += n
 	}
 	if len(sc.terms) > 0 {
-		data["denied_terms"] = sc.terms
+		var n int
+		data["denied_terms"], n = clipList(sc.terms, maxEventNames)
+		truncated += n
+	}
+	if truncated > 0 {
+		data["attrs_truncated"] = truncated
 	}
 	if sc.trap != "" {
 		data["honeytoken"] = sc.trap

@@ -106,7 +106,7 @@ func runAsClient(ctx context.Context, cfg *config.Config, req clientTestRequest,
 	}
 	defer closeSrc()
 	clientPW := ""
-	if pcfg.ClientBind.DN != "" && pcfg.ClientBind.PasswordHash == "" {
+	if pcfg.ClientBind.DN != "" && !pcfg.ClientBind.PasswordHash.IsSet() {
 		pw, _, err := secrets.Resolve(pcfg.ClientBind.PasswordSource())
 		if err != nil {
 			return nil, fmt.Errorf("profile.%s.client_bind.password: %w", req.Profile, err)

@@ -14,6 +14,13 @@ masked attributes, object class mapping, local post-filtering, honeytokens,
 2. Classify the base (`profile.Rules.ClassifyBase`): root DSE, subschema,
    `<virtual_base>`, `ou=users`, `ou=groups`, one user, one group.
 3. Detect a honeytoken target (see below).
+   Require a bind: with `anonymous_bind = false` (default) a search of the
+   virtual tree on a connection that has not completed a client or user bind
+   — never bound, or the last bind failed — is refused with
+   `strongAuthRequired` and `op_denied{op=search, reason=not_bound}`; no
+   upstream work is done. The root DSE and the subschema stay readable by
+   everyone, a honeypot answers everyone. `Directory.Test`/`Evaluate`
+   (`aldapctl test`, shadow rules) run as the application's bound session.
 4. Split the filter (`ldapfilter.Split`) by attribute class:
    - **upstream** — `attrs.allow`, `attrs.map` keys and `objectClass`;
    - **local** — computed attributes and `memberOf` (post-filter);

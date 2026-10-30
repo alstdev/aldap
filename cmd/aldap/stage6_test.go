@@ -111,14 +111,14 @@ func bindFrom(t *testing.T, r *running, local string) *ldap.Conn {
 func TestStage6_AccountLockAndNegativeCache(t *testing.T) {
 	r := startDaemon(t, stage6Config)
 	c := r.ldaps(t)
-	before := r.dc.Calls().Binds
+	before := r.dc.Calls().UserBinds()
 	if err := c.Bind("bob.brown@test.aldap", "wrong-1"); !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 		t.Fatalf("first failure: %v", err)
 	}
 	if err := c.Bind("bob.brown@test.aldap", "wrong-1"); !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 		t.Fatalf("cached failure: %v", err)
 	}
-	if n := r.dc.Calls().Binds - before; n != 1 {
+	if n := r.dc.Calls().UserBinds() - before; n != 1 {
 		t.Errorf("negative cache: upstream binds = %d, want 1", n)
 	}
 	waitEvents(t, r, "negative cache", events.BindBlocked, func(e events.Record) bool { return e.Reason == ratelimit.ReasonNegativeCache })
@@ -128,11 +128,11 @@ func TestStage6_AccountLockAndNegativeCache(t *testing.T) {
 	if lock.Data["source"] != "ratelimit" || lock.Data["failures"] != float64(3) {
 		t.Errorf("lock event %+v", lock)
 	}
-	before = r.dc.Calls().Binds
+	before = r.dc.Calls().UserBinds()
 	if err := c.Bind("bob.brown@test.aldap", "bob.brown-pass"); !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 		t.Fatalf("locked account with the right password: %v", err)
 	}
-	if r.dc.Calls().Binds != before {
+	if r.dc.Calls().UserBinds() != before {
 		t.Error("locked account reached the upstream")
 	}
 	waitEvents(t, r, "account_locked", events.BindBlocked, func(e events.Record) bool { return e.Reason == ratelimit.ReasonAccountLocked })
@@ -179,18 +179,18 @@ func TestStage6_IPLockAndLockdown(t *testing.T) {
 	waitFor(t, func() bool { return c.Bind(tClientDN, clientPassword) == nil })
 	// Lockdown (manual until the API of Stage 7): 127.0.0.1 is outside allow_cidrs.
 	r.d.state.limiter.SetLockdown(true, ratelimit.SourceAPI)
-	before := r.dc.Calls().Binds
+	before := r.dc.Calls().UserBinds()
 	if err := c.Bind("alice.adams@test.aldap", "alice.adams-pass"); !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 		t.Errorf("lockdown bind: %v", err)
 	}
-	if r.dc.Calls().Binds != before {
+	if r.dc.Calls().UserBinds() != before {
 		t.Error("lockdown bind reached the upstream")
 	}
 	waitEvents(t, r, "lockdown", events.BindBlocked, func(e events.Record) bool { return e.Reason == ratelimit.ReasonLockdown })
 	if _, err := c.Search(ldap.NewSearchRequest(tUsersDN, ldap.ScopeWholeSubtree, 0, 0, 0, false, "(uid=alice*)", []string{"uid"}, nil)); !ldap.IsErrorWithCode(err, ldap.LDAPResultUnwillingToPerform) {
 		t.Errorf("lockdown search: %v", err)
 	}
-	if err := c.Bind("svc-monitor", "x"); ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) && r.dc.Calls().Binds == before {
+	if err := c.Bind("svc-monitor", "x"); ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) && r.dc.Calls().UserBinds() == before {
 		t.Error("lockdown allow_accounts did not reach the upstream")
 	}
 	c2 := bindFrom(t, r, "127.0.0.2")
@@ -261,12 +261,12 @@ func TestStage6_ReconHoneytokenAnomaly(t *testing.T) {
 	if err != nil || until.Before(time.Now().Add(23*time.Hour)) {
 		t.Errorf("honeytoken lock until %v (%v)", lock.Data["until"], err)
 	}
-	before := r.dc.Calls().Binds
+	before := r.dc.Calls().UserBinds()
 	c5 := bindFrom(t, r, "127.0.0.5")
 	if err := c5.Bind("h.petrenko@test.aldap", "guess"); !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 		t.Errorf("honeytoken bind: %v", err)
 	}
-	if r.dc.Calls().Binds != before {
+	if r.dc.Calls().UserBinds() != before {
 		t.Error("honeytoken bind reached the upstream")
 	}
 	waitEvents(t, r, "honeytoken bind", events.Honeytoken, func(e events.Record) bool { return e.Data["op"] == "bind" && e.ClientIP == "127.0.0.5" })

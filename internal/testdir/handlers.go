@@ -104,6 +104,9 @@ func (s *Server) handleBind(w *gldap.ResponseWriter, r *gldap.Request) {
 		_ = w.Write(r.NewBindResponse(gldap.WithResponseCode(gldap.ResultProtocolError)))
 		return
 	}
+	if s.opts.serviceDN != "" && strings.EqualFold(m.UserName, s.opts.serviceDN) {
+		s.svcBinds.Add(1)
+	}
 	pw := string(m.Password)
 	if m.UserName == "" && pw == "" {
 		s.setBound(r.ConnectionID(), "")
