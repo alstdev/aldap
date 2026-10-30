@@ -100,7 +100,7 @@ func newA2Fixture(t *testing.T, mut func(p *config.Profile), dcOpts ...testdir.O
 func a2Search(t *testing.T, d *Directory, base string, scope listener.Scope, filter string) (listener.Result, []listener.Entry) {
 	t.Helper()
 	c := &collector{}
-	res := d.Search(context.Background(), testConn("10.9.9.9"), &listener.SearchRequest{Base: base, Scope: scope, Filter: filter}, c)
+	res := d.Search(context.Background(), boundConn("10.9.9.9"), &listener.SearchRequest{Base: base, Scope: scope, Filter: filter}, c)
 	return res, c.entries
 }
 

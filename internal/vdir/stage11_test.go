@@ -32,7 +32,7 @@ func TestTaps(t *testing.T) {
 	f := newFixture(t, nil)
 	log := &tapLog{}
 	d := New(f.d.rules, f.up, Options{Events: f.ev, Taps: []Tap{log}})
-	c := testConn("192.0.2.10")
+	c := boundConn("192.0.2.10")
 	col := &collector{}
 	res := d.Search(context.Background(), c, &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(objectClass=*)", Attrs: []string{"mail"}, SizeLimit: 50}, col)
 	if res.Code != ldap.LDAPResultSuccess || len(log.ts) != 1 {

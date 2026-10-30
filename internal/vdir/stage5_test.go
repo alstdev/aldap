@@ -46,6 +46,21 @@ func testConn(ip string) *listener.Conn {
 	return listener.NewConn("c-t", "virola", &net.TCPAddr{IP: net.ParseIP(ip), Port: 4000})
 }
 
+// boundZeroConn is boundConn without an address (no per-IP limits apply).
+func boundZeroConn() *listener.Conn {
+	c := &listener.Conn{}
+	c.SetBound(listener.Bound{Kind: listener.BindClient, Name: clientDN})
+	return c
+}
+
+// boundConn is a connection that has completed a client bind: since FP-1 a
+// search of the virtual tree needs one (anonymous_bind = false).
+func boundConn(ip string) *listener.Conn {
+	c := testConn(ip)
+	c.SetBound(listener.Bound{Kind: listener.BindClient, Name: clientDN})
+	return c
+}
+
 func withVirolaGroup(p *config.Profile) {
 	p.Groups = map[string]config.Group{"virola-users": {Description: "All Virola users", ObjectClass: "groupOfNames"}}
 }
@@ -53,6 +68,9 @@ func withVirolaGroup(p *config.Profile) {
 func (f *fixture) searchFrom(t *testing.T, c *listener.Conn, base string, scope listener.Scope, filter string, attrs ...string) (listener.Result, []listener.Entry) {
 	t.Helper()
 	col := &collector{}
+	if c.Bound().Kind == "" && f.d.rules.Mode != "honeypot" {
+		c.SetBound(listener.Bound{Kind: listener.BindClient, Name: clientDN})
+	}
 	res := f.d.Search(context.Background(), c, &listener.SearchRequest{Base: base, Scope: scope, Filter: filter, Attrs: attrs}, col)
 	return res, col.entries
 }

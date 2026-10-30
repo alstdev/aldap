@@ -122,7 +122,7 @@ func TestAudit14_A3_PostFilterPullsWholeDirectory(t *testing.T) {
 			s.mu.Unlock()
 			col := &collector{}
 			start := time.Now()
-			res := d.Search(context.Background(), testConn("10.0.0.9"), &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: f, Attrs: []string{"uid"}, SizeLimit: 10}, col)
+			res := d.Search(context.Background(), boundConn("10.0.0.9"), &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: f, Attrs: []string{"uid"}, SizeLimit: 10}, col)
 			el := time.Since(start)
 			s.mu.Lock()
 			served, n := s.served, len(s.reqs)
@@ -143,7 +143,7 @@ func TestAudit14_A3_PostFilterPullsWholeDirectory(t *testing.T) {
 	}
 	// Baseline: a plain upstream term is bounded (limit + 1).
 	col := &collector{}
-	d.Search(context.Background(), testConn("10.0.0.9"), &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(uid=user*)", Attrs: []string{"uid"}, SizeLimit: 10}, col)
+	d.Search(context.Background(), boundConn("10.0.0.9"), &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(uid=user*)", Attrs: []string{"uid"}, SizeLimit: 10}, col)
 	if req := s.last(t); req.SizeLimit != 11 {
 		t.Errorf("plain search SizeLimit = %d, want 11", req.SizeLimit)
 	}
@@ -163,7 +163,7 @@ func TestAudit14_A3_SearchEventFieldsUnbounded(t *testing.T) {
 	}
 	before := heapInUse()
 	col := &collector{}
-	res := d.Search(context.Background(), testConn("10.0.0.9"), &listener.SearchRequest{Base: hugeBase, Scope: listener.ScopeSub, Filter: "(uid=x)", Attrs: attrs}, col)
+	res := d.Search(context.Background(), boundConn("10.0.0.9"), &listener.SearchRequest{Base: hugeBase, Scope: listener.ScopeSub, Filter: "(uid=x)", Attrs: attrs}, col)
 	if res.Code != ldap.LDAPResultNoSuchObject {
 		t.Fatalf("code = %d", res.Code)
 	}
@@ -209,7 +209,7 @@ func TestAudit14_A3_BindEventAccountUnbounded(t *testing.T) {
 // is refused; size 0 abandons; a huge size serves everything.
 func TestAudit14_A3_PagingCookieIsolation(t *testing.T) {
 	d, _, _ := fakeDir(t, 5, nil, Options{})
-	a, b := testConn("10.0.0.1"), testConn("10.0.0.2")
+	a, b := boundConn("10.0.0.1"), boundConn("10.0.0.2")
 	page := func(c *listener.Conn, size uint32, cookie []byte) (listener.Result, int, []byte) {
 		col := &collector{}
 		res := d.Search(context.Background(), c, &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(uid=*)", Attrs: []string{"uid"},
@@ -263,7 +263,7 @@ func TestAudit14_A3_PagingCookieIsolation(t *testing.T) {
 // computation in the report.
 func TestAudit14_A3_PagingStateRetention(t *testing.T) {
 	d, _, _ := fakeDir(t, 5000, nil, Options{}) // max_result_size 5000, cursors 8
-	c := testConn("10.0.0.1")
+	c := boundConn("10.0.0.1")
 	before := heapInUse()
 	var cookies [][]byte
 	for i := 0; i < 9; i++ {
@@ -394,7 +394,7 @@ func TestAudit14_A3_DeepFilterOpsCost(t *testing.T) {
 	start := time.Now()
 	for i := 0; i < 20; i++ {
 		col := &collector{}
-		res := d.Search(context.Background(), testConn("10.0.0.9"), &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: f, Attrs: []string{"uid"}}, col)
+		res := d.Search(context.Background(), boundConn("10.0.0.9"), &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: f, Attrs: []string{"uid"}}, col)
 		if res.Code != 0 {
 			t.Fatalf("code %d", res.Code)
 		}

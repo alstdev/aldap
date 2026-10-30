@@ -43,6 +43,7 @@ type TestResult struct {
 // paging; events are emitted like for a real search from 127.0.0.1.
 func (d *Directory) Test(ctx context.Context, req TestRequest) TestResult {
 	c := listener.NewConn("c-test", d.rules.Name, &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	c.SetBound(listener.Bound{Kind: listener.BindClient}) // simulates the application's bound session
 	sc := &searchCtx{conn: c, start: d.now(), req: &listener.SearchRequest{Base: req.Base, Scope: req.Scope, Filter: req.Filter, Attrs: req.Attrs, SizeLimit: req.SizeLimit}}
 	res, entries := d.search(ctx, sc)
 	d.emitSearch(sc, res, len(entries))
@@ -63,6 +64,7 @@ func (d *Directory) Test(ctx context.Context, req TestRequest) TestResult {
 // directory is built without events, guard and observer.
 func (d *Directory) Evaluate(ctx context.Context, req TestRequest) (listener.Result, []listener.Entry) {
 	c := listener.NewConn("c-shadow", d.rules.Name, &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	c.SetBound(listener.Bound{Kind: listener.BindClient})
 	sc := &searchCtx{conn: c, start: d.now(), req: &listener.SearchRequest{Base: req.Base, Scope: req.Scope, Filter: req.Filter, Attrs: req.Attrs, SizeLimit: req.SizeLimit}}
 	return d.search(ctx, sc)
 }

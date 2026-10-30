@@ -154,7 +154,7 @@ func (f *fixture) search(t *testing.T, base string, scope listener.Scope, filter
 func (f *fixture) searchReq(t *testing.T, req *listener.SearchRequest) (listener.Result, []listener.Entry) {
 	t.Helper()
 	c := &collector{}
-	res := f.d.Search(context.Background(), &listener.Conn{}, req, c)
+	res := f.d.Search(context.Background(), boundZeroConn(), req, c)
 	return res, c.entries
 }
 
@@ -348,7 +348,7 @@ func TestSearch_Users(t *testing.T) {
 		t.Errorf("bad filter → %v", res)
 	}
 	// Writer failure.
-	if res := f.d.Search(context.Background(), &listener.Conn{}, &listener.SearchRequest{Base: vb, Scope: listener.ScopeBase, Filter: "(objectClass=*)"}, failingWriter{}); res.Code != ldap.LDAPResultOther {
+	if res := f.d.Search(context.Background(), boundZeroConn(), &listener.SearchRequest{Base: vb, Scope: listener.ScopeBase, Filter: "(objectClass=*)"}, failingWriter{}); res.Code != ldap.LDAPResultOther {
 		t.Errorf("writer failure → %v", res)
 	}
 }
@@ -431,7 +431,7 @@ func TestSearch_RDNCollision(t *testing.T) {
 
 func TestSearch_Paging(t *testing.T) {
 	f := newFixture(t, nil)
-	c := &listener.Conn{}
+	c := boundZeroConn()
 	page := func(cookie []byte, size uint32) (listener.Result, []listener.Entry, *ldap.ControlPaging) {
 		col := &collector{}
 		res := f.d.Search(context.Background(), c, &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(objectClass=user)",
@@ -484,7 +484,7 @@ func TestSearch_Paging(t *testing.T) {
 	// Size limit exceeded is reported on the first page.
 	g := newFixture(t, func(p *config.Profile) { p.Limits.MaxResultSize = 7 })
 	col := &collector{}
-	res = g.d.Search(context.Background(), &listener.Conn{}, &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(objectClass=user)",
+	res = g.d.Search(context.Background(), boundZeroConn(), &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(objectClass=user)",
 		Controls: []ldap.Control{&ldap.ControlPaging{PagingSize: 5}}}, col)
 	if res.Code != ldap.LDAPResultSizeLimitExceeded || len(col.entries) != 5 {
 		t.Errorf("limited page: %v %d", res, len(col.entries))
@@ -537,7 +537,7 @@ func TestSearch_UpstreamErrors(t *testing.T) {
 	} {
 		d, _ := fakeDirectory(t, &fakeUp{searchErr: tc.err}, nil)
 		col := &collector{}
-		res := d.Search(context.Background(), &listener.Conn{}, &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(objectClass=*)"}, col)
+		res := d.Search(context.Background(), boundZeroConn(), &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(objectClass=*)"}, col)
 		if res.Code != tc.code || len(col.entries) != 0 {
 			t.Errorf("%v → %v", tc.err, res)
 		}
@@ -546,7 +546,7 @@ func TestSearch_UpstreamErrors(t *testing.T) {
 	// objectGUID it is a hash of the DN.
 	d, _ := fakeDirectory(t, &fakeUp{entries: []upstream.Entry{{DN: "CN=x,DC=y", Attrs: map[string][]string{"mail": {"x@y"}}}}}, nil)
 	col := &collector{}
-	d.Search(context.Background(), &listener.Conn{}, &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(objectClass=*)"}, col)
+	d.Search(context.Background(), boundZeroConn(), &listener.SearchRequest{Base: usersDN, Scope: listener.ScopeSub, Filter: "(objectClass=*)"}, col)
 	if len(col.entries) != 1 || strings.Contains(strings.ToLower(col.entries[0].DN), "dc=y") || !strings.HasPrefix(col.entries[0].DN, "cn=") {
 		t.Errorf("fallback rdn = %v", dns(col.entries))
 	}

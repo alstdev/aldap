@@ -366,6 +366,9 @@ func (d *Directory) search(ctx context.Context, sc *searchCtx) (listener.Result,
 		return listener.Result{Code: ldap.LDAPResultNoSuchObject}, nil
 	}
 	d.detectTrap(sc, kind, rdn)
+	if res, ok := d.requireBind(sc, kind); !ok {
+		return res, nil
+	}
 	out, res := d.entriesFor(ctx, sc, kind, rdn)
 	if res.Code != ldap.LDAPResultSuccess {
 		return res, nil
@@ -374,6 +377,26 @@ func (d *Directory) search(ctx context.Context, sc *searchCtx) (listener.Result,
 		return listener.Success, out
 	}
 	return d.sizeLimit(sc, out)
+}
+
+// requireBind refuses a search of the virtual tree on a connection that has
+// not completed a client or user bind while anonymous_bind is off: an
+// anonymous session has no rights (SPEC §4.3, RFC 4513 §5.1), and a
+// connection that never bound is anonymous (RFC 4511 §4.2.1). The root DSE
+// and the subschema stay readable by everyone (RFC 4512 §5.1); a honeypot
+// answers everyone and counts every search (SPEC §4.5).
+func (d *Directory) requireBind(sc *searchCtx, kind profile.BaseKind) (listener.Result, bool) {
+	if d.rules.AnonymousBind || d.rules.Mode == "honeypot" || kind == profile.BaseRootDSE || kind == profile.BaseSubschema {
+		return listener.Result{}, true
+	}
+	if k := sc.conn.Bound().Kind; k == listener.BindClient || k == listener.BindUser {
+		return listener.Result{}, true
+	}
+	ev := sc.conn.Event(events.OpDenied, events.LevelMedium)
+	ev.Data = map[string]any{"op": "search", "reason": "not_bound"}
+	d.ev.Emit(ev)
+	d.log.Info("search refused: no bind", "conn_id", sc.conn.ID(), "client_ip", sc.conn.ClientIP())
+	return listener.Result{Code: ldap.LDAPResultStrongAuthRequired, Diagnostic: "a successful bind is required"}, false
 }
 
 // detectTrap raises the honeytoken event for a search that targets a trap

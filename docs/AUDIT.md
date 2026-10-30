@@ -158,6 +158,14 @@
 - [ ] **Контейнер**: запуск під `deploy/seccomp.json` з `--read-only --cap-drop ALL --user 65532` (див. А.9).
 - [ ] **IPS/ITSM**: webhook-приймач повертає 3xx → батч не пересилається (помилка в логах), HMAC перевіряється.
 
+## Фінальний незалежний прохід (субагент лише з кодом і SPEC.md)
+
+Субагент без доступу до цього документа отримав worktree від `main` (до виправлень Stage 14), тож частина його знахідок (FP-3, FP-4, FP-5, FP-7 у частині `baseline.reported`, розмір події, FP-9, FP-10) описує вже виправлений код: його PoC-тести повторно запущені на поточній гілці й проходять. Нижче лише знахідки, що відтворюються на поточному коді.
+
+| ID | Серйозність | Компонент | Опис | Відтворення | Виправлення |
+|---|---|---|---|---|---|
+| **FP-1** | **Critical** | `internal/vdir/directory.go` (`search`) | Пошук не перевіряв стан bind: клієнт, який не робив bind (або чий bind невдалий), при `anonymous_bind=false` читав увесь віртуальний каталог (UPN, mail, групи, honeytoken-записи). SPEC §4.3: анонімна сесія не має прав. | `TestFinalPass_UnboundSearchRefused/OverTCP/FailedBindThenSearch` (22 записи отримані без bind через реальний TCP) | `sec:` коміт цього етапу: `requireBind` → `strongAuthRequired` + `op_denied{op=search, reason=not_bound}`; RootDSE/subschema, honeypot, `anonymous_bind=true` не змінені; `Directory.Test/Evaluate` працюють як bound-сесія. Регресійні тести `TestAudit14_FP1_*`, `TestDaemon_TLSTermination` (після невдалого bind пошук відхиляється) |
+
 ## Статус етапу (станом на запис)
 
 | Вимога ТЗ | Статус |
